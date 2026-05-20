@@ -1,0 +1,1 @@
+"""Hackathon AI starter app."""

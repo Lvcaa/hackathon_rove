@@ -1,0 +1,103 @@
+services:
+  ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hackathon-rove-ai:latest
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - .:/workspace
+      - ./data:/workspace/data
+      - ./models:/workspace/models
+      - ./outputs:/workspace/outputs
+    working_dir: /workspace
+    tty: true
+    stdin_open: true
+    command: bash
+
+  jupyter:
+    image: hackathon-rove-ai:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - .:/workspace
+      - ./data:/workspace/data
+      - ./models:/workspace/models
+      - ./outputs:/workspace/outputs
+    working_dir: /workspace
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+    command: >
+      jupyter lab
+      --ip=0.0.0.0
+      --port=8888
+      --no-browser
+      --allow-root
+      --NotebookApp.token=''
+      --NotebookApp.password=''
+
+  api:
+    image: hackathon-rove-ai:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - .:/workspace
+      - ./data:/workspace/data
+      - ./models:/workspace/models
+      - ./outputs:/workspace/outputs
+    working_dir: /workspace
+    ports:
+      - "${API_PORT:-8000}:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    profiles:
+      - api
+
+  streamlit:
+    image: hackathon-rove-ai:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - .:/workspace
+      - ./data:/workspace/data
+      - ./models:/workspace/models
+      - ./outputs:/workspace/outputs
+    working_dir: /workspace
+    ports:
+      - "${STREAMLIT_PORT:-8501}:8501"
+    command: streamlit run app/streamlit_app.py --server.address=0.0.0.0 --server.port=8501
+    profiles:
+      - streamlit
+
+  gradio:
+    image: hackathon-rove-ai:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - .:/workspace
+      - ./data:/workspace/data
+      - ./models:/workspace/models
+      - ./outputs:/workspace/outputs
+    working_dir: /workspace
+    ports:
+      - "${GRADIO_PORT:-7860}:7860"
+    command: python app/gradio_app.py
+    profiles:
+      - gradio

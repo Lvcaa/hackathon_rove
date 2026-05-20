@@ -1,0 +1,51 @@
+# Core scientific Python
+numpy
+pandas
+scipy
+scikit-learn
+
+# Notebooks and visualization
+jupyterlab
+ipykernel
+matplotlib
+seaborn
+plotly
+
+# Deep learning frameworks
+torch
+torchvision
+torchaudio
+tensorflow
+keras
+
+# LLM and AI tooling
+openai
+anthropic
+transformers
+datasets
+accelerate
+sentence-transformers
+langchain
+langchain-community
+langchain-openai
+huggingface-hub
+
+# APIs and demo apps
+fastapi
+uvicorn[standard]
+streamlit
+gradio
+
+# Images and utilities
+pillow
+opencv-python-headless
+python-dotenv
+pydantic
+pydantic-settings
+tqdm
+requests
+
+# Development
+pytest
+ruff
+black
