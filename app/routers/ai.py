@@ -1,9 +1,9 @@
 """
 AI Natural Language Trip Planner.
 
-POST /api/ai/plan — accepts a plain-language Italian prompt, calls Gemma 27B
-via LM Studio to extract intent, then runs search + auto-select + book
-internally and returns a boarding pass.
+POST /api/ai/plan — accepts a plain-language Italian prompt, calls Gemma via
+LM Studio REST API v1 (/api/v1/chat) to extract intent, then runs search +
+auto-select + book internally and returns a boarding pass.
 """
 
 from __future__ import annotations
@@ -12,15 +12,16 @@ import json
 import os
 from typing import Any
 
+import requests
 from fastapi import APIRouter, HTTPException
-from openai import OpenAI
 from pydantic import BaseModel
 
 from app.routers.trips import _run_book_logic, _run_search_logic
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
-_LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
+_LM_STUDIO_BASE = os.getenv("LM_STUDIO_URL", "http://localhost:1234")
+_LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "gemma-4-26b-a4b-it-mlx")
 
 _SYSTEM_PROMPT = (
     "You are a trip planning assistant for CommuteSync, a mobility app in Trento/Rovereto, Italy. "
@@ -39,10 +40,6 @@ class AIPlanRequest(BaseModel):
     prompt: str
 
 
-def _lm_client() -> OpenAI:
-    return OpenAI(base_url=_LM_STUDIO_URL, api_key="lm-studio")
-
-
 def _strip_markdown(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
@@ -53,45 +50,54 @@ def _strip_markdown(text: str) -> str:
     return text.strip()
 
 
-def _parse_intent(prompt: str) -> dict[str, Any]:
+def _extract_text(data: dict[str, Any]) -> str:
+    """Pull the assistant text out of LM Studio REST API v1 response."""
+    choices = data.get("choices", [])
+    if choices:
+        return choices[0].get("message", {}).get("content", "") or ""
+    return data.get("content", "") or ""
+
+
+def _call_lm_studio(system_prompt: str, user_input: str, timeout: float = 30.0) -> str:
+    url = f"{_LM_STUDIO_BASE}/api/v1/chat"
     try:
-        client = _lm_client()
+        resp = requests.post(
+            url,
+            json={
+                "model": _LM_STUDIO_MODEL,
+                "system_prompt": system_prompt,
+                "input": user_input,
+            },
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        return _extract_text(resp.json())
+    except requests.ConnectionError as exc:
+        raise HTTPException(status_code=503, detail="AI planner unavailable: LM Studio not reachable") from exc
+    except requests.HTTPError as exc:
+        raise HTTPException(status_code=503, detail=f"AI planner error: {exc.response.status_code}") from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"AI planner unavailable: {exc}") from exc
 
+
+def _parse_intent(prompt: str) -> dict[str, Any]:
+    raw = _call_lm_studio(_SYSTEM_PROMPT, prompt)
     try:
-        resp = client.chat.completions.create(
-            model="local-model",
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.1,
-            max_tokens=150,
-        )
-        raw = _strip_markdown(resp.choices[0].message.content or "")
-        return json.loads(raw)
+        return json.loads(_strip_markdown(raw))
     except json.JSONDecodeError:
-        # Retry with a primed assistant turn to force JSON
+        # Retry: prime the model with the opening brace to force JSON
+        retry_input = (
+            f"{prompt}\n\n"
+            "Reply ONLY with a JSON object. Example:\n"
+            '{"destination": "MART Rovereto", "modality_hint": "train", "time_hint": "18:00"}'
+        )
+        raw2 = _call_lm_studio(_SYSTEM_PROMPT, retry_input)
         try:
-            resp = client.chat.completions.create(
-                model="local-model",
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                    {"role": "assistant", "content": '{"destination": "'},
-                ],
-                temperature=0.0,
-                max_tokens=100,
-            )
-            raw = '{"destination": "' + (resp.choices[0].message.content or "").strip()
-            return json.loads(raw)
-        except (json.JSONDecodeError, Exception) as exc:
+            return json.loads(_strip_markdown(raw2))
+        except json.JSONDecodeError as exc:
             raise HTTPException(
                 status_code=422, detail="Could not parse trip intent from prompt"
             ) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"AI planner unavailable: {exc}") from exc
 
 
 def _availability_score(m: dict[str, Any]) -> float:
