@@ -1487,7 +1487,6 @@ export default function MapView({
         {activeRoute && <RouteLayer route={activeRoute} />}
       </MapContainer>
       {onLocate && <LocateButton status={locationStatus} onPress={onLocate} />}
-      {onOpenRouting && !routingPanelOpen && <RouteButton onPress={onOpenRouting} />}
     </View>
   );
 }
