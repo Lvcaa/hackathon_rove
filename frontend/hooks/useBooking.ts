@@ -117,14 +117,5 @@ export function useBooking() {
     setState(INITIAL);
   }, []);
 
-  const setConfirmedFromAI = useCallback((data: TripBookResponse) => {
-    setState((prev) => ({
-      ...prev,
-      phase:        'confirmed',
-      confirmation: data,
-      error:        null,
-    }));
-  }, []);
-
-  return { state, search, book, dismiss, setConfirmedFromAI };
+  return { state, search, book, dismiss };
 }

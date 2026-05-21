@@ -1092,56 +1092,64 @@ function RailLayer({ rail }: { rail: RailCollection }) {
   );
 }
 
-// Train marker height scales with the train's real length (51–280 m).
-function trainHeight(lengthM: number): number {
-  return Math.max(22, Math.min(56, Math.round(lengthM * 0.15) + 12));
-}
-
-// Top-down train icon. Front = top (North = 0°); fast services get a tapered
-// aerodynamic nose, regional/Trentino ones a blunt cab.
-function trainSvg(color: string, h: number, fast: boolean): string {
-  const vb = Math.round(h * 2);
-  const noseEnd = fast ? 17 : 9;     // y where the body reaches full width
-  const tail = vb - 7;
-  const body = fast
-    ? `M14 2 C9 2 5 ${noseEnd - 7} 5 ${noseEnd} L5 ${tail} Q5 ${vb - 2} 10 ${vb - 2} `
-      + `L18 ${vb - 2} Q23 ${vb - 2} 23 ${tail} L23 ${noseEnd} C23 ${noseEnd - 7} 19 2 14 2 Z`
-    : `M10 3 L18 3 Q23 3 23 8 L23 ${tail} Q23 ${vb - 2} 18 ${vb - 2} `
-      + `L10 ${vb - 2} Q5 ${vb - 2} 5 ${tail} L5 8 Q5 3 10 3 Z`;
-  const winY = Math.round(vb * 0.34);
-  const winH = Math.round(vb * 0.40);
-  const windshield = fast
-    ? `<path d="M14 ${noseEnd - 1} C10 ${noseEnd - 1} 8 ${noseEnd + 5} 8 ${noseEnd + 8} `
-      + `L20 ${noseEnd + 8} C20 ${noseEnd + 5} 18 ${noseEnd - 1} 14 ${noseEnd - 1} Z" `
-      + `fill="rgba(255,255,255,0.34)"/>`
-    : `<rect x="8.5" y="6" width="11" height="7" rx="3" fill="rgba(255,255,255,0.30)"/>`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="${h}" viewBox="0 0 28 ${vb}" fill="none">
-    <path d="${body}" fill="${color}" stroke="rgba(255,255,255,0.22)" stroke-width="0.8"/>
-    ${windshield}
-    <rect x="6" y="${winY}" width="3.4" height="${winH}" rx="1.7" fill="rgba(255,255,255,0.22)"/>
-    <rect x="18.6" y="${winY}" width="3.4" height="${winH}" rx="1.7" fill="rgba(255,255,255,0.22)"/>
-    <rect x="9" y="${Math.round(vb / 2 - 1)}" width="10" height="2.4" rx="1.2" fill="rgba(0,0,0,0.28)"/>
-    <rect x="9" y="${vb - 6}" width="10" height="2.6" rx="1.3" fill="rgba(255,170,40,0.55)"/>
+// One carriage of a train, top-down. Front = top (North = 0°). The leading
+// carriage is drawn as a locomotive — a cab windscreen, plus a tapered
+// aerodynamic nose for high-speed services; the rest are plain coaches.
+function carriageSvg(color: string, len: number, w: number, locoFast: boolean, isLoco: boolean): string {
+  const vw = Math.max(8, Math.round(w * 2));
+  const vl = Math.max(10, Math.round(len * 2));
+  const rx = Math.min(5, vw / 3);
+  const ins = 1.6;
+  let body: string;
+  if (locoFast) {
+    const nose = Math.min(vl * 0.42, vw * 1.1);
+    body = `M${vw / 2} ${ins} `
+      + `C${vw * 0.2} ${ins} ${ins} ${nose * 0.5} ${ins} ${nose} `
+      + `L${ins} ${vl - rx} Q${ins} ${vl - ins} ${ins + rx} ${vl - ins} `
+      + `L${vw - ins - rx} ${vl - ins} Q${vw - ins} ${vl - ins} ${vw - ins} ${vl - rx} `
+      + `L${vw - ins} ${nose} C${vw - ins} ${nose * 0.5} ${vw * 0.8} ${ins} ${vw / 2} ${ins} Z`;
+  } else {
+    body = `M${ins + rx} ${ins} L${vw - ins - rx} ${ins} `
+      + `Q${vw - ins} ${ins} ${vw - ins} ${ins + rx} L${vw - ins} ${vl - rx} `
+      + `Q${vw - ins} ${vl - ins} ${vw - ins - rx} ${vl - ins} L${ins + rx} ${vl - ins} `
+      + `Q${ins} ${vl - ins} ${ins} ${vl - rx} L${ins} ${ins + rx} Q${ins} ${ins} ${ins + rx} ${ins} Z`;
+  }
+  const winW = Math.max(1.3, vw * 0.16);
+  const winY = locoFast ? vl * 0.42 : vl * 0.2;
+  const winH = locoFast ? vl * 0.4 : vl * 0.6;
+  const windows = `
+    <rect x="${ins + 0.7}" y="${winY}" width="${winW}" height="${winH}" rx="${winW / 2}" fill="rgba(255,255,255,0.24)"/>
+    <rect x="${vw - ins - 0.7 - winW}" y="${winY}" width="${winW}" height="${winH}" rx="${winW / 2}" fill="rgba(255,255,255,0.24)"/>`;
+  const windshield = isLoco
+    ? `<rect x="${vw * 0.27}" y="${locoFast ? vl * 0.18 : ins + 1.2}" width="${vw * 0.46}" height="${Math.max(2.4, vw * 0.42)}" rx="2" fill="rgba(255,255,255,0.36)"/>`
+    : '';
+  // Dark seams at the coach ends so adjacent carriages read as separate units.
+  const seam = `<rect x="${ins}" y="${vl - 2.2}" width="${vw - ins * 2}" height="1.5" rx="0.7" fill="rgba(0,0,0,0.34)"/>`
+    + (isLoco ? '' : `<rect x="${ins}" y="0.7" width="${vw - ins * 2}" height="1.5" rx="0.7" fill="rgba(0,0,0,0.34)"/>`);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(w)}" height="${Math.round(len)}" viewBox="0 0 ${vw} ${vl}" fill="none">
+    <path d="${body}" fill="${color}" stroke="rgba(255,255,255,0.3)" stroke-width="0.7"/>
+    ${windows}${windshield}${seam}
   </svg>`;
 }
 
-function createTrainIcon(train: TrainVehicle, bearing: number) {
-  const h = trainHeight(train.lengthM);
-  const size = Math.max(h, 38);   // square wrap keeps rotation centred + fits glow
-  const glow = train.live
+function createCarriageIcon(train: TrainVehicle, isLoco: boolean, lenPx: number, bearing: number): L.DivIcon {
+  const len = Math.round(lenPx);
+  const w = Math.max(5, Math.min(20, Math.round(lenPx * 0.46)));
+  const glow = isLoco && train.live
     ? `<div class="cs-train-glow" style="background:radial-gradient(closest-side, ${train.color}cc, ${train.color}00);"></div>`
     : '';
+  const size = Math.max(len, w) + (isLoco && train.live ? 20 : 4);
   return L.divIcon({
     className: 'cs-train-marker',
     html: `<div class="cs-train-wrap${train.live ? '' : ' ghost'}" style="width:${size}px;height:${size}px;">
       ${glow}
       <div class="cs-train-rot" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(${bearing}deg);">
-        ${trainSvg(train.color, h, train.fast)}
+        ${carriageSvg(train.color, len, w, isLoco && train.fast, isLoco)}
       </div>
     </div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
-    popupAnchor: [0, -(h / 2) - 4],
+    popupAnchor: [0, -(len / 2) - 4],
   });
 }
 
@@ -1383,10 +1391,12 @@ function TrainVehiclePopup({ train }: { train: TrainVehicle }) {
   );
 }
 
-// Live trains — viewport-culled, icons cached so the CSS glide survives polls.
+// Live trains — each rendered as a chain of carriage markers laid along the
+// track. Carriage length is sized from the current zoom so the coaches stay
+// coupled, and icons are cached so the CSS glide survives the 4 s polls.
 function LiveTrainLayer({ trains }: { trains: TrainVehicle[] }) {
   const iconCache = useRef<Map<string, L.DivIcon>>(new Map());
-  const { bounds } = useMapViewport();
+  const { bounds, zoom } = useMapViewport();
 
   const visible = useMemo(() => {
     const padded = bounds.pad(VIEWPORT_PAD);
@@ -1395,21 +1405,34 @@ function LiveTrainLayer({ trains }: { trains: TrainVehicle[] }) {
 
   return (
     <Pane name="cs-trains" style={{ zIndex: 606 }}>
-      {visible.map((train) => {
-        const bucket = Math.round(train.bearing / 15) * 15;
-        const key = `${train.id}:${train.brand}:${train.live}:${train.lengthM}:${bucket}`;
-        let icon = iconCache.current.get(key);
-        if (!icon) {
-          icon = createTrainIcon(train, bucket);
-          iconCache.current.set(key, icon);
-        }
-        return (
-          <Marker key={train.id} position={[train.lat, train.lon]} icon={icon} pane="cs-trains">
-            <Popup closeButton>
-              <TrainVehiclePopup train={train} />
-            </Popup>
-          </Marker>
-        );
+      {visible.flatMap((train) => {
+        // Real carriage length → on-screen pixels at the current zoom.
+        const mPerPx = (156543.03 * Math.cos(train.lat * Math.PI / 180)) / 2 ** zoom;
+        const carM = train.lengthM / Math.max(train.cars, 1);
+        const lenPx = Math.max(8, Math.min(70, carM / mPerPx));
+        const lenBucket = Math.round(lenPx);
+        return train.carriages.map((car, idx) => {
+          const isLoco = idx === 0;
+          const bucket = Math.round(car.bearing / 12) * 12;
+          const key = `${train.id}:${idx}:${isLoco}:${train.live}:${lenBucket}:${bucket}`;
+          let icon = iconCache.current.get(key);
+          if (!icon) {
+            icon = createCarriageIcon(train, isLoco, lenPx, bucket);
+            iconCache.current.set(key, icon);
+          }
+          return (
+            <Marker
+              key={`${train.id}-c${idx}`}
+              position={[car.lat, car.lon]}
+              icon={icon}
+              pane="cs-trains"
+            >
+              <Popup closeButton>
+                <TrainVehiclePopup train={train} />
+              </Popup>
+            </Marker>
+          );
+        });
       })}
     </Pane>
   );

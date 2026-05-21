@@ -122,6 +122,18 @@ export default function MapScreen() {
     setActiveRoute(null);
   }, []);
 
+  // The AI planner resolved a free-text request into an itinerary — draw it.
+  const handleAIPlan = useCallback((suggestion: RouteSuggestion) => {
+    setRoutingOpen(false);
+    setActiveRoute(suggestion);
+  }, []);
+
+  const handleAIClear = useCallback(() => setActiveRoute(null), []);
+
+  const handleAIRequestLocation = useCallback(() => {
+    if (locationStatus === 'idle' || locationStatus === 'error') startLocating();
+  }, [locationStatus, startLocating]);
+
   // Locate button: start tracking on first press, otherwise re-centre the map.
   const handleLocate = useCallback(() => {
     if (locationStatus === 'tracking') {
@@ -178,7 +190,14 @@ export default function MapScreen() {
             onBook={handleBookFromRoute}
           />
         )}
-        <BookingSheet searchTrigger={bookingTrigger} suggestions={suggestions} />
+        <BookingSheet
+          searchTrigger={bookingTrigger}
+          suggestions={suggestions}
+          aiOrigin={location}
+          onAIPlan={handleAIPlan}
+          onAIClear={handleAIClear}
+          onAIRequestLocation={handleAIRequestLocation}
+        />
       </View>
     </View>
   );

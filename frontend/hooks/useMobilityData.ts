@@ -219,7 +219,7 @@ export function useMobilityData() {
       try {
         const res = await fetch(`${API_BASE}/api/trains/live`, { signal: AbortSignal.timeout(8000) });
         if (!res.ok) throw new Error('not ok');
-        const col: { features: { geometry: { coordinates: number[] }; properties: Record<string, string | number | boolean> }[] } = await res.json();
+        const col: { features: { geometry: { coordinates: number[] }; properties: Record<string, unknown> }[] } = await res.json();
         const trains: TrainVehicle[] = col.features.map((f) => {
           const p = f.properties;
           return {
@@ -227,6 +227,7 @@ export function useMobilityData() {
             lat: f.geometry.coordinates[1],
             lon: f.geometry.coordinates[0],
             bearing: Number(p.bearing),
+            carriages: Array.isArray(p.carriages) ? (p.carriages as TrainVehicle['carriages']) : [],
             brand: String(p.brand) as TrainVehicle['brand'],
             brandLabel: String(p.brand_label),
             color: String(p.color),

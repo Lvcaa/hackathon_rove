@@ -71,11 +71,18 @@ export interface RailCollection {
   }[];
 }
 
+export interface TrainCarriage {
+  lat: number;
+  lon: number;
+  bearing: number;
+}
+
 export interface TrainVehicle {
   id: string;
   lat: number;
   lon: number;
   bearing: number;
+  carriages: TrainCarriage[];   // per-carriage positions along the track
   brand: TrainBrand;
   brandLabel: string;
   color: string;       // hex with '#'

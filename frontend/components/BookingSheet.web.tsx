@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, CSSProperties } from 'react';
 import { useBooking } from '../hooks/useBooking';
-import AIChatBubble from './AIChatBubble.web';
+import AIPlannerPanel from './AIPlannerPanel';
+import { RouteSuggestion } from '../types/routing';
 import {
   ModalityOption, TrainModality, ParkingModality,
   TaxiModality, BikeSharingModality, TripBookResponse,
@@ -97,24 +98,25 @@ function injectStyles() {
                   box-shadow 0.22s ease, border-color 0.22s ease;
     }
     .cs-searchbar:hover {
-      transform: translateY(-2px);
-      border-color: rgba(255,255,255,0.17) !important;
-      box-shadow: 0 26px 70px rgba(0,0,0,0.75),
+      transform: translateY(-1px);
+      border-color: rgba(0,229,255,0.32) !important;
+      box-shadow: 0 0 0 1px rgba(0,229,255,0.14),
+                  0 10px 38px rgba(0,0,0,0.58),
                   inset 0 1px 0 rgba(255,255,255,0.10) !important;
     }
     .cs-searchbar:focus-within {
-      border-color: rgba(255,255,255,0.30) !important;
-      box-shadow: 0 26px 70px rgba(0,0,0,0.7),
-                  0 0 0 3px rgba(255,255,255,0.10),
-                  inset 0 1px 0 rgba(255,255,255,0.14) !important;
+      border-color: rgba(0,229,255,0.55) !important;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.55),
+                  0 0 0 3px rgba(0,229,255,0.10),
+                  inset 0 1px 0 rgba(255,255,255,0.12) !important;
     }
-    /* Icon badge brightens while the field is focused */
+    /* Icon badge picks up cyan tint while the field is focused */
     .cs-search-badge {
       transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
     }
     .cs-searchbar:focus-within .cs-search-badge {
-      background: rgba(255,255,255,0.16) !important;
-      border-color: rgba(255,255,255,0.30) !important;
+      background: rgba(0,229,255,0.12) !important;
+      border-color: rgba(0,229,255,0.35) !important;
       transform: scale(1.06);
     }
     .cs-search-input::placeholder { color: rgba(255,255,255,0.38); font-weight: 400; }
@@ -124,7 +126,7 @@ function injectStyles() {
     }
     .cs-search-btn:hover {
       transform: translateY(-1px);
-      box-shadow: 0 6px 22px rgba(255,255,255,0.22);
+      box-shadow: 0 6px 22px rgba(0,229,255,0.35);
     }
     .cs-search-btn:active { transform: translateY(0) scale(0.96); }
     /* Suggestion rows: subtle wash + nudge on hover */
@@ -134,6 +136,44 @@ function injectStyles() {
     .cs-suggestion:hover {
       background: rgba(255,255,255,0.06) !important;
       padding-left: 20px !important;
+    }
+
+    /* ── Squircle hover glow ─────────────────────────────────────────────── */
+    /* Base = exit transition: glow lingers as it fades out */
+    .cs-ai-squircle {
+      transition: box-shadow 0.55s ease, border-color 0.45s ease,
+                  transform 0.35s ease, background 0.45s ease;
+    }
+    /* :hover = enter transition: glow snaps on immediately */
+    .cs-ai-squircle:hover {
+      transition: box-shadow 0.16s ease, border-color 0.12s ease,
+                  transform 0.22s cubic-bezier(0.34,1.56,0.64,1), background 0.16s ease;
+      background: rgba(0,229,255,0.05);
+      border-color: rgba(0,229,255,0.65) !important;
+      box-shadow:
+        0 0 0 1px rgba(0,229,255,0.55),
+        0 0 16px rgba(0,229,255,0.32),
+        0 0 44px rgba(0,229,255,0.14),
+        0 8px 28px rgba(0,0,0,0.5),
+        inset 0 1px 0 rgba(255,255,255,0.14) !important;
+      transform: scale(1.04) translateY(-1px);
+    }
+    .cs-srch-squircle {
+      transition: box-shadow 0.55s ease, border-color 0.45s ease,
+                  transform 0.35s ease, background 0.45s ease;
+    }
+    .cs-srch-squircle:hover {
+      transition: box-shadow 0.16s ease, border-color 0.12s ease,
+                  transform 0.22s cubic-bezier(0.34,1.56,0.64,1), background 0.16s ease;
+      background: rgba(255,255,255,0.06);
+      border-color: rgba(255,255,255,0.32) !important;
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.26),
+        0 0 14px rgba(255,255,255,0.10),
+        0 0 34px rgba(255,255,255,0.04),
+        0 8px 28px rgba(0,0,0,0.5),
+        inset 0 1px 0 rgba(255,255,255,0.16) !important;
+      transform: scale(1.04) translateY(-1px);
     }
   `;
   document.head.appendChild(s);
@@ -274,6 +314,36 @@ function Spinner({ size = 20, color = C.cyan }: { size?: number; color?: string 
       borderTopColor: color,
       borderRadius: '50%',
     }} />
+  );
+}
+
+const SQUIRCLE_BASE: CSSProperties = {
+  width: 44, height: 60, flexShrink: 0,
+  background: 'rgba(17,19,27,0.82)',
+  backdropFilter: 'blur(30px) saturate(180%)',
+  WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+  border: '1px solid rgba(255,255,255,0.12)',
+  borderRadius: 16,
+  boxShadow: '0 8px 32px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08)',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  cursor: 'pointer', padding: 0,
+};
+
+function AISquircle({ onToggle }: { onToggle: () => void }) {
+  return (
+    <button className="cs-ai-squircle" onClick={onToggle} style={SQUIRCLE_BASE} aria-label="AI Planner">
+      <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+        <path d="M7.5 1.5L8.75 6.25L13.5 7.5L8.75 8.75L7.5 13.5L6.25 8.75L1.5 7.5L6.25 6.25Z" fill="#00e5ff"/>
+      </svg>
+    </button>
+  );
+}
+
+function SearchSquircle({ onToggle }: { onToggle: () => void }) {
+  return (
+    <button className="cs-srch-squircle" onClick={onToggle} style={{ ...SQUIRCLE_BASE, color: 'rgba(255,255,255,0.6)' }} aria-label="Cerca destinazione">
+      <Ico.Search />
+    </button>
   );
 }
 
@@ -768,7 +838,7 @@ function SearchBar({
           WebkitBackdropFilter: 'blur(30px) saturate(180%)',
           borderRadius: showList ? '22px 22px 16px 16px' : 22,
           border: '1px solid rgba(255,255,255,0.12)',
-          boxShadow: '0 28px 80px rgba(0,0,0,0.78), inset 0 1px 0 rgba(255,255,255,0.08)',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08)',
           overflow: 'hidden',
         }}
       >
@@ -814,7 +884,7 @@ function SearchBar({
             className="cs-search-btn"
             onClick={() => submit(query)}
             style={{
-              padding: '8px 15px', background: '#ffffff', color: '#000',
+              padding: '8px 15px', background: C.cyan, color: '#04121a',
               border: 'none', borderRadius: 11, fontSize: 12, fontWeight: 700,
               cursor: 'pointer', fontFamily: FONT, letterSpacing: '0.01em', flexShrink: 0,
             }}
@@ -1012,12 +1082,24 @@ interface Props {
   onRouteReady?: (waypoints: [number, number][], dest: [number, number]) => void;
   searchTrigger?: { destination: string; nonce: number } | null;
   suggestions?: SuggestionItem[];
+  /** Live user position passed to the AI planner so it routes from the user. */
+  aiOrigin?: { lat: number; lng: number } | null;
+  /** Fired with the itinerary the AI planner chose — draw it on the map. */
+  onAIPlan?: (suggestion: RouteSuggestion) => void;
+  /** Fired when the AI plan is dismissed — clear the route from the map. */
+  onAIClear?: () => void;
+  /** Ask the host to start geolocation for the AI planner. */
+  onAIRequestLocation?: () => void;
 }
 
-export default function BookingSheet({ onRouteReady, searchTrigger, suggestions }: Props) {
-  const { state, search, book, dismiss, setConfirmedFromAI } = useBooking();
+export default function BookingSheet({
+  onRouteReady, searchTrigger, suggestions,
+  aiOrigin, onAIPlan, onAIClear, onAIRequestLocation,
+}: Props) {
+  const { state, search, book, dismiss } = useBooking();
   const [query, setQuery] = useState('');
   const [dismissing, setDismissing] = useState(false);
+  const [aiActive, setAiActive] = useState(false);
   const lastNonce = useRef<number | null>(null);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1035,12 +1117,13 @@ export default function BookingSheet({ onRouteReady, searchTrigger, suggestions 
     if (dismissTimer.current) clearTimeout(dismissTimer.current);
   }, []);
 
-  // Auto-trigger from map "Naviga →" click
+  // Auto-trigger from map "Naviga →" click — also ensures search panel is visible
   useEffect(() => {
     if (searchTrigger && searchTrigger.nonce !== lastNonce.current) {
       lastNonce.current = searchTrigger.nonce;
       setQuery(searchTrigger.destination);
       search(searchTrigger.destination);
+      setAiActive(false);
     }
   }, [searchTrigger, search]);
 
@@ -1059,38 +1142,45 @@ export default function BookingSheet({ onRouteReady, searchTrigger, suggestions 
     search(dest);
   }, [search]);
 
-  // The search bar lives at the top of the viewport. The sheet panel and the
-  // AI bubble grow downward from it so they all share the same width and centre.
+  // Outer column anchors everything. Top row uses alignItems:stretch so the
+  // squircle grows to the same height as the search bar / AI panel.
   return (
     <div style={{
       position: 'fixed', top: 28, left: '50%', transform: 'translateX(-50%)',
-      width: 'min(440px, calc(100vw - 48px))', zIndex: 1000,
-      display: 'flex', flexDirection: 'column', gap: 10,
+      zIndex: 1000, display: 'flex', flexDirection: 'column', gap: 10,
+      width: 'min(492px, calc(100vw - 48px))',
     }}>
-      <SearchBar onSearch={handleSearch} suggestions={suggestions} />
-      {state.phase === 'idle' && (
-        <>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            margin: '0 4px',
-          }}>
-            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
-            <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.3)', fontFamily: "'Inter', system-ui, sans-serif" }}>
-              oppure
-            </span>
-            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
-          </div>
-          <AIChatBubble onConfirmed={setConfirmedFromAI} />
-        </>
-      )}
+      {/* Top row — squircle is fixed height matching the search bar */}
+      <div style={{ display: 'flex', flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+        {aiActive
+          ? <SearchSquircle onToggle={() => setAiActive(false)} />
+          : <AISquircle onToggle={() => setAiActive(true)} />
+        }
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {aiActive ? (
+            <AIPlannerPanel
+              origin={aiOrigin ?? null}
+              onPlanReady={(s) => onAIPlan?.(s)}
+              onClear={() => onAIClear?.()}
+              onRequestLocation={onAIRequestLocation}
+            />
+          ) : (
+            <SearchBar onSearch={handleSearch} suggestions={suggestions} />
+          )}
+        </div>
+      </div>
+
+      {/* Sheet panel — offset left to align with the right panel */}
       {(state.phase !== 'idle' || dismissing) && (
-        <SheetPanel
-          state={state}
-          query={query}
-          onBook={book}
-          onDismiss={handleDismiss}
-          dismissing={dismissing}
-        />
+        <div style={{ marginLeft: 52 }}>
+          <SheetPanel
+            state={state}
+            query={query}
+            onBook={book}
+            onDismiss={handleDismiss}
+            dismissing={dismissing}
+          />
+        </div>
       )}
     </div>
   );
