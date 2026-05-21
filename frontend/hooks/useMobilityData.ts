@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react';
-import { MobilityData, Stats } from '../types/mobility';
+import { useState, useEffect, useRef } from 'react';
+import { MobilityData, Stats, BusVehicle, MobilityCollection } from '../types/mobility';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
+const BUS_REFRESH_MS = 15_000;
+
+// ── Mock data (Trento coordinates from CSV files) ───────────────────────────
 
 const MOCK: MobilityData = {
   stations: {
@@ -21,7 +24,6 @@ const MOCK: MobilityData = {
       { type: 'Feature', geometry: { type: 'Point', coordinates: [11.121362, 46.072017] }, properties: { nome: 'Taxi – Piazza Dante', indirizzo: 'piazza Dante, 9' } },
       { type: 'Feature', geometry: { type: 'Point', coordinates: [11.123907, 46.074755] }, properties: { nome: 'Taxi – Via Petrarca', indirizzo: 'via Petrarca 8' } },
       { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1254, 46.0681] }, properties: { nome: 'Taxi – Largo Carducci', indirizzo: 'largo Carducci' } },
-      { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1175, 46.0798] }, properties: { nome: 'Taxi – Via Roma', indirizzo: 'via Roma' } },
     ],
   },
   carsharing: {
@@ -31,91 +33,153 @@ const MOCK: MobilityData = {
       { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1156, 46.0598] }, properties: { via: 'corso del Lavoro e della Scienza', auto: '1', ordinanza: 'n°810-2013' } },
       { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1241, 46.0626] }, properties: { via: 'via S. Croce', auto: '1', ordinanza: 'n°571-2010' } },
       { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1215, 46.0683] }, properties: { via: 'Piazza Dante', auto: '1', ordinanza: 'n°924-2011' } },
-      { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1188, 46.0755] }, properties: { via: 'via Belenzani', auto: '2', ordinanza: 'n°312-2015' } },
     ],
   },
   parking: {
     type: 'FeatureCollection',
     features: [
-      {
-        type: 'Feature',
-        geometry: {
-          type: 'Polygon',
-          coordinates: [[[11.118, 46.074], [11.122, 46.074], [11.122, 46.077], [11.118, 46.077], [11.118, 46.074]]],
-        },
-        properties: { zona: 'cblu2', descrizione: 'Seconda corona blu', pianopark: 10 },
-      },
-      {
-        type: 'Feature',
-        geometry: {
-          type: 'Polygon',
-          coordinates: [[[11.108, 46.059], [11.115, 46.059], [11.115, 46.065], [11.108, 46.065], [11.108, 46.059]]],
-        },
-        properties: { zona: 'viola', descrizione: 'Area periferica viola Bolghera', pianopark: 14 },
-      },
-      {
-        type: 'Feature',
-        geometry: {
-          type: 'Polygon',
-          coordinates: [[[11.113, 46.064], [11.119, 46.064], [11.119, 46.070], [11.113, 46.070], [11.113, 46.064]]],
-        },
-        properties: { zona: 'verde', descrizione: 'ZTL verde', pianopark: 2 },
-      },
-      {
-        type: 'Feature',
-        geometry: {
-          type: 'Polygon',
-          coordinates: [[[11.120, 46.063], [11.128, 46.063], [11.128, 46.069], [11.120, 46.069], [11.120, 46.063]]],
-        },
-        properties: { zona: 'crosso2', descrizione: 'Seconda corona rossa', pianopark: 9 },
-      },
+      { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[11.118, 46.074], [11.122, 46.074], [11.122, 46.077], [11.118, 46.077], [11.118, 46.074]]] }, properties: { zona: 'cblu2', descrizione: 'Seconda corona blu', pianopark: 10 } },
+      { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[11.108, 46.059], [11.115, 46.059], [11.115, 46.065], [11.108, 46.065], [11.108, 46.059]]] }, properties: { zona: 'viola', descrizione: 'Area periferica viola Bolghera', pianopark: 14 } },
+      { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[11.113, 46.064], [11.119, 46.064], [11.119, 46.070], [11.113, 46.070], [11.113, 46.064]]] }, properties: { zona: 'verde', descrizione: 'ZTL verde', pianopark: 2 } },
     ],
   },
 };
 
-const MOCK_STATS: Stats = {
-  stations: MOCK.stations.features.length,
-  taxi: MOCK.taxi.features.length,
-  carsharing: MOCK.carsharing.features.length,
-  parking_zones: MOCK.parking.features.length,
+// Mock bus stops — a handful spread across Trento until real data loads
+const MOCK_BUSSTOPS: MobilityCollection = {
+  type: 'FeatureCollection',
+  features: [
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1185, 46.0716] }, properties: { nome: 'Stazione FS', routes: '5 B 6' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1213, 46.0718] }, properties: { nome: 'Piazza Dante', routes: '5 B 8' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1241, 46.0643] }, properties: { nome: 'Piazza Venezia', routes: '5 B' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1139, 46.0870] }, properties: { nome: 'FTM Commerciale', routes: '8' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1364, 46.0693] }, properties: { nome: 'Via Venezia / Corallo', routes: '13' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1395, 46.0671] }, properties: { nome: 'Mesiano / Facoltà Ingegneria', routes: '13' } },
+  ],
 };
+
+// Simulated live buses (mirrors the backend logic, runs in frontend when no backend)
+function simulateBuses(t: number): BusVehicle[] {
+  const routes: Record<string, [number, number][]> = {
+    '5': [[46.108, 11.107], [46.088, 11.116], [46.072, 11.121], [46.059, 11.128], [46.052, 11.132]],
+    'B': [[46.071, 11.118], [46.073, 11.121], [46.068, 11.124], [46.066, 11.119], [46.071, 11.118]],
+    '13': [[46.072, 11.118], [46.070, 11.134], [46.067, 11.151], [46.066, 11.158]],
+    '8': [[46.072, 11.121], [46.082, 11.117], [46.090, 11.114], [46.097, 11.111]],
+  };
+  const period = 600;
+  const buses: BusVehicle[] = [];
+  for (const [line, wps] of Object.entries(routes)) {
+    for (let i = 0; i < 3; i++) {
+      const offset = i * (period / 3);
+      const frac = ((t + offset) % period) / period;
+      const segCount = wps.length - 1;
+      const segIdx = Math.min(Math.floor(frac * segCount), segCount - 1);
+      const segFrac = (frac * segCount) - segIdx;
+      const a = wps[segIdx], b = wps[segIdx + 1];
+      const lat = a[0] + segFrac * (b[0] - a[0]);
+      const lon = a[1] + segFrac * (b[1] - a[1]);
+      const bearing = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI + 360) % 360;
+      buses.push({ id: `bus-${line}-${i}`, lat, lon, bearing, route: line, speed: 30 + (i * 5) });
+    }
+  }
+  return buses;
+}
+
+// ── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useMobilityData() {
   const [data, setData] = useState<MobilityData>(MOCK);
-  const [stats, setStats] = useState<Stats>(MOCK_STATS);
+  const [busStops, setBusStops] = useState<MobilityCollection>(MOCK_BUSSTOPS);
+  const [busVehicles, setBusVehicles] = useState<BusVehicle[]>(() => simulateBuses(Date.now() / 1000));
+  const [stats, setStats] = useState<Stats>({
+    stations: MOCK.stations.features.length,
+    taxi: MOCK.taxi.features.length,
+    carsharing: MOCK.carsharing.features.length,
+    parking_zones: MOCK.parking.features.length,
+    busstops: MOCK_BUSSTOPS.features.length,
+    buses_live: 12,
+  });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const backendAvailable = useRef(false);
 
+  // Fetch static mobility data once
   useEffect(() => {
-    async function fetchAll() {
+    async function fetchStatic() {
       try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 4000);
-        const [stationsRes, taxiRes, carsharingRes, parkingRes, statsRes] = await Promise.all([
-          fetch(`${API_BASE}/api/stations`, { signal: controller.signal }),
-          fetch(`${API_BASE}/api/taxi`, { signal: controller.signal }),
-          fetch(`${API_BASE}/api/carsharing`, { signal: controller.signal }),
-          fetch(`${API_BASE}/api/parking`, { signal: controller.signal }),
-          fetch(`${API_BASE}/api/stats`, { signal: controller.signal }),
+        const ctrl = new AbortController();
+        const timeout = setTimeout(() => ctrl.abort(), 5000);
+        const [sR, tR, cR, pR, stR] = await Promise.all([
+          fetch(`${API_BASE}/api/stations`, { signal: ctrl.signal }),
+          fetch(`${API_BASE}/api/taxi`, { signal: ctrl.signal }),
+          fetch(`${API_BASE}/api/carsharing`, { signal: ctrl.signal }),
+          fetch(`${API_BASE}/api/parking`, { signal: ctrl.signal }),
+          fetch(`${API_BASE}/api/stats`, { signal: ctrl.signal }),
         ]);
         clearTimeout(timeout);
         const [stations, taxi, carsharing, parking, statsData] = await Promise.all([
-          stationsRes.json(),
-          taxiRes.json(),
-          carsharingRes.json(),
-          parkingRes.json(),
-          statsRes.json(),
+          sR.json(), tR.json(), cR.json(), pR.json(), stR.json(),
         ]);
         setData({ stations, taxi, carsharing, parking });
-        setStats(statsData);
+        setStats((prev) => ({ ...prev, ...statsData }));
+        backendAvailable.current = true;
       } catch {
-        // Backend unavailable — mock data already set as default
+        // use mock
       } finally {
         setLoading(false);
       }
     }
-    fetchAll();
+    fetchStatic();
   }, []);
 
-  return { data, stats, loading, error };
+  // Fetch bus stops once (may take a few seconds — Overpass)
+  useEffect(() => {
+    async function fetchBusStops() {
+      try {
+        const res = await fetch(`${API_BASE}/api/busstops`, { signal: AbortSignal.timeout(35000) });
+        if (!res.ok) return;
+        const col: MobilityCollection = await res.json();
+        if (col.features.length > 0) {
+          setBusStops(col);
+          setStats((prev) => ({ ...prev, busstops: col.features.length }));
+        }
+      } catch {
+        // keep mock bus stops
+      }
+    }
+    fetchBusStops();
+  }, []);
+
+  // Refresh live bus positions every 15 s
+  useEffect(() => {
+    async function fetchBuses() {
+      if (backendAvailable.current) {
+        try {
+          const res = await fetch(`${API_BASE}/api/buses/live`);
+          if (!res.ok) throw new Error('not ok');
+          const col: { features: { geometry: { coordinates: number[] }; properties: Record<string, string | number> }[] } = await res.json();
+          const vehicles: BusVehicle[] = col.features.map((f) => ({
+            id: String(f.properties.id),
+            lat: f.geometry.coordinates[1],
+            lon: f.geometry.coordinates[0],
+            bearing: Number(f.properties.bearing),
+            route: String(f.properties.route),
+            speed: Number(f.properties.speed),
+          }));
+          setBusVehicles(vehicles);
+          setStats((prev) => ({ ...prev, buses_live: vehicles.length }));
+          return;
+        } catch {
+          // fall through to simulation
+        }
+      }
+      // Simulate in-browser when backend unavailable
+      setBusVehicles(simulateBuses(Date.now() / 1000));
+    }
+
+    fetchBuses();
+    const id = setInterval(fetchBuses, BUS_REFRESH_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  return { data, busStops, busVehicles, stats, loading };
 }

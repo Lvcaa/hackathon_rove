@@ -8,10 +8,10 @@ import Sidebar from '../components/Sidebar';
 import BottomSheet from '../components/BottomSheet';
 import StatsCard from '../components/StatsCard';
 
-const ALL: Set<CategoryKey> = new Set(['stations', 'taxi', 'carsharing', 'parking']);
+const ALL: Set<CategoryKey> = new Set(['stations', 'taxi', 'carsharing', 'parking', 'busstops', 'buses']);
 
 export default function MapScreen() {
-  const { data, stats } = useMobilityData();
+  const { data, busStops, busVehicles, stats } = useMobilityData();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
 
@@ -47,6 +47,8 @@ export default function MapScreen() {
       <View style={styles.mapWrapper}>
         <MapView
           data={data}
+          busStops={busStops}
+          busVehicles={busVehicles}
           visibleCategories={visibleCategories}
           selectedFeature={selectedFeature?.feature ?? null}
           onFeatureSelect={handleFeatureSelect}

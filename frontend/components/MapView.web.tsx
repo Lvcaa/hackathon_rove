@@ -1,25 +1,31 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, StyleSheet } from 'react-native';
-import { MapContainer, TileLayer, Marker, Polygon, Popup, useMap } from 'react-leaflet';
+import {
+  MapContainer, TileLayer, Marker, CircleMarker,
+  Polygon, Popup, useMap,
+} from 'react-leaflet';
 import L from 'leaflet';
-import { MobilityData, MobilityFeature, CategoryKey } from '../types/mobility';
+import { MobilityData, MobilityFeature, MobilityCollection, CategoryKey, BusVehicle } from '../types/mobility';
 import { CategoryColors, CategoryIcons, CategoryLabels } from '../constants/colors';
 
 interface Props {
   data: MobilityData;
+  busStops: MobilityCollection;
+  busVehicles: BusVehicle[];
   visibleCategories: Set<CategoryKey>;
   selectedFeature: MobilityFeature | null;
   onFeatureSelect: (feature: MobilityFeature, category: CategoryKey) => void;
 }
 
 const TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
-const TILE_ATTR =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
 const CENTER: [number, number] = [46.072, 11.121];
+const ORANGE = '#f97316';
+
+// ── CSS injection ─────────────────────────────────────────────────────────────
 
 function injectStyles() {
-  if (typeof document === 'undefined') return;
-  if (document.getElementById('cs-leaflet-css')) return;
+  if (typeof document === 'undefined' || document.getElementById('cs-leaflet-css')) return;
 
   const link = document.createElement('link');
   link.id = 'cs-leaflet-css';
@@ -30,153 +36,139 @@ function injectStyles() {
   const style = document.createElement('style');
   style.id = 'cs-map-styles';
   style.textContent = `
-    html, body { margin: 0; padding: 0; }
+    html, body { margin:0; padding:0; }
+    .leaflet-container { background:#0d1117 !important; font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif; }
 
-    .leaflet-container {
-      background: #0d1117 !important;
-      font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
-    }
-
-    /* Dark popup wrapper */
     .leaflet-popup-content-wrapper {
-      background: rgba(15, 15, 18, 0.96) !important;
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border: 1px solid rgba(255,255,255,0.1) !important;
-      border-radius: 16px !important;
-      box-shadow: 0 12px 40px rgba(0,0,0,0.7) !important;
-      padding: 0 !important;
-      color: #fff !important;
-      min-width: 200px;
+      background:rgba(13,13,15,0.97) !important;
+      backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+      border:1px solid rgba(255,255,255,0.1) !important;
+      border-radius:16px !important;
+      box-shadow:0 16px 48px rgba(0,0,0,0.8) !important;
+      padding:0 !important; color:#fff !important; min-width:200px;
     }
-    .leaflet-popup-content {
-      margin: 0 !important;
-      color: #fff !important;
-    }
-    .leaflet-popup-tip-container {
-      display: none !important;
-    }
+    .leaflet-popup-content { margin:0 !important; color:#fff !important; }
+    .leaflet-popup-tip-container { display:none !important; }
     .leaflet-popup-close-button {
-      color: rgba(255,255,255,0.4) !important;
-      font-size: 18px !important;
-      top: 10px !important;
-      right: 12px !important;
-      width: 24px !important;
-      height: 24px !important;
-      line-height: 24px !important;
+      color:rgba(255,255,255,0.4) !important; font-size:18px !important;
+      top:10px !important; right:12px !important;
+      width:24px !important; height:24px !important; line-height:24px !important;
     }
-    .leaflet-popup-close-button:hover {
-      color: #fff !important;
-      background: transparent !important;
-    }
+    .leaflet-popup-close-button:hover { color:#fff !important; background:transparent !important; }
 
-    /* Attribution */
     .leaflet-control-attribution {
-      background: rgba(0,0,0,0.6) !important;
-      color: rgba(255,255,255,0.35) !important;
-      font-size: 10px !important;
-      border-radius: 6px 0 0 0 !important;
+      background:rgba(0,0,0,0.6) !important; color:rgba(255,255,255,0.3) !important;
+      font-size:9px !important; border-radius:6px 0 0 0 !important;
     }
-    .leaflet-control-attribution a { color: rgba(255,255,255,0.5) !important; }
-
-    /* Zoom control */
+    .leaflet-control-attribution a { color:rgba(255,255,255,0.4) !important; }
     .leaflet-control-zoom a {
-      background: rgba(17,17,17,0.9) !important;
-      color: rgba(255,255,255,0.7) !important;
-      border-color: rgba(255,255,255,0.1) !important;
+      background:rgba(17,17,17,0.9) !important; color:rgba(255,255,255,0.7) !important;
+      border-color:rgba(255,255,255,0.1) !important;
     }
-    .leaflet-control-zoom a:hover {
-      background: rgba(30,30,30,0.95) !important;
-      color: #fff !important;
-    }
-    .leaflet-bar {
-      border: 1px solid rgba(255,255,255,0.1) !important;
-      border-radius: 10px !important;
-      overflow: hidden;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
-    }
+    .leaflet-control-zoom a:hover { background:rgba(30,30,30,0.95) !important; color:#fff !important; }
+    .leaflet-bar { border:1px solid rgba(255,255,255,0.1) !important; border-radius:10px !important; overflow:hidden; box-shadow:0 4px 16px rgba(0,0,0,0.6) !important; }
 
-    /* Custom marker */
-    .cs-marker {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 50%;
-      cursor: pointer;
-      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    /* Bus vehicle marker animation */
+    @keyframes bus-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(249,115,22,0.7); }
+      70%  { box-shadow: 0 0 0 8px rgba(249,115,22,0); }
+      100% { box-shadow: 0 0 0 0 rgba(249,115,22,0); }
     }
-    .cs-marker:hover {
-      transform: scale(1.15);
-    }
+    .bus-vehicle-inner { animation: bus-pulse 2s infinite; }
   `;
   document.head.appendChild(style);
 }
 
-function createIcon(category: CategoryKey) {
+function StylesInjector() {
+  useEffect(() => { injectStyles(); }, []);
+  return null;
+}
+
+// ── Icon factories ─────────────────────────────────────────────────────────────
+
+function createPointIcon(category: CategoryKey) {
   const color = CategoryColors[category];
   const icon = CategoryIcons[category];
   return L.divIcon({
     className: '',
-    html: `<div class="cs-marker" style="
-      width:40px;height:40px;
-      background:${color}20;
-      border:2.5px solid ${color};
-      box-shadow:0 0 16px ${color}55, 0 2px 8px rgba(0,0,0,0.5);
-      font-size:18px;
+    html: `<div style="
+      width:38px;height:38px;border-radius:50%;
+      background:${color}1a;border:2.5px solid ${color};
+      display:flex;align-items:center;justify-content:center;
+      font-size:17px;cursor:pointer;
+      box-shadow:0 0 16px ${color}44,0 2px 8px rgba(0,0,0,0.5);
     ">${icon}</div>`,
-    iconSize: [40, 40],
-    iconAnchor: [20, 20],
-    popupAnchor: [0, -24],
+    iconSize: [38, 38],
+    iconAnchor: [19, 19],
+    popupAnchor: [0, -22],
   });
 }
+
+function createBusVehicleIcon(route: string, bearing: number) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+      <div class="bus-vehicle-inner" style="
+        width:38px;height:38px;border-radius:50%;
+        background:${ORANGE};border:2.5px solid rgba(255,255,255,0.25);
+        display:flex;align-items:center;justify-content:center;
+        font-size:18px;cursor:pointer;
+        transform:rotate(${bearing}deg);
+        box-shadow:0 0 20px rgba(249,115,22,0.6),0 2px 10px rgba(0,0,0,0.5);
+        transition:transform 1s ease;
+      ">▲</div>
+      <div style="
+        background:rgba(249,115,22,0.95);color:#fff;
+        padding:1px 7px;border-radius:5px;font-size:10px;font-weight:800;
+        white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.4);
+        border:1px solid rgba(255,255,255,0.2);letter-spacing:0.05em;
+      ">${route}</div>
+    </div>`,
+    iconSize: [46, 58],
+    iconAnchor: [23, 19],
+    popupAnchor: [0, -22],
+  });
+}
+
+// ── Popup content ──────────────────────────────────────────────────────────────
 
 function getDisplayName(f: MobilityFeature): string {
   const p = f.properties;
   return String(p.nome || p.name || p.via || p.zona || p.descrizione || 'Posizione');
 }
 
-function PopupContent({ feature, category }: { feature: MobilityFeature; category: CategoryKey }) {
+function FeaturePopup({ feature, category }: { feature: MobilityFeature; category: CategoryKey }) {
   const color = CategoryColors[category];
   const name = getDisplayName(feature);
-  const props = Object.entries(feature.properties).filter(
-    ([k]) => !['nome', 'name', 'zona'].includes(k) && feature.properties[k] !== null
-  );
+  const pairs = Object.entries(feature.properties)
+    .filter(([k]) => !['nome', 'name', 'zona'].includes(k) && feature.properties[k] !== null)
+    .slice(0, 3);
 
   return (
-    <div style={{ padding: '16px 20px 16px', minWidth: 200 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, paddingRight: 16 }}>
+    <div style={{ padding: '16px 20px 14px', minWidth: 200 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 10, paddingRight: 18 }}>
         <div style={{
-          width: 32, height: 32, borderRadius: '50%',
-          background: color + '22', border: `1.5px solid ${color}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15,
-          flexShrink: 0,
+          width: 34, height: 34, borderRadius: '50%',
+          background: color + '20', border: `1.5px solid ${color}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0,
         }}>
           {CategoryIcons[category]}
         </div>
         <div>
           <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', lineHeight: 1.2 }}>{name}</div>
-          <div style={{ fontSize: 11, color: color, marginTop: 2, fontWeight: 600 }}>{CategoryLabels[category]}</div>
+          <div style={{ fontSize: 11, color, marginTop: 2, fontWeight: 600 }}>{CategoryLabels[category]}</div>
         </div>
       </div>
-
-      {props.slice(0, 3).map(([k, v]) => (
-        <div key={k} style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)',
-        }}>
+      {pairs.map(([k, v]) => (
+        <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
           <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', textTransform: 'capitalize' }}>{k}</span>
           <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 500 }}>{String(v)}</span>
         </div>
       ))}
-
       <div style={{
-        marginTop: 12,
-        background: color + '18',
-        border: `1px solid ${color}44`,
-        borderRadius: 8, padding: '8px 0',
-        textAlign: 'center', cursor: 'pointer',
-        fontSize: 12, fontWeight: 700, color,
-        letterSpacing: '0.02em',
+        marginTop: 12, background: color + '18', border: `1px solid ${color}44`,
+        borderRadius: 8, padding: '8px 0', textAlign: 'center', cursor: 'pointer',
+        fontSize: 12, fontWeight: 700, color, letterSpacing: '0.02em',
       }}>
         Naviga →
       </div>
@@ -184,25 +176,96 @@ function PopupContent({ feature, category }: { feature: MobilityFeature; categor
   );
 }
 
+function BusStopPopup({ feature }: { feature: MobilityFeature }) {
+  const nome = String(feature.properties.nome || 'Fermata bus');
+  const routes = String(feature.properties.routes || '');
+
+  return (
+    <div style={{ padding: '14px 18px 12px', minWidth: 180 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingRight: 18 }}>
+        <div style={{
+          width: 30, height: 30, borderRadius: '50%',
+          background: ORANGE + '22', border: `1.5px solid ${ORANGE}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0,
+        }}>
+          🚌
+        </div>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 13, color: '#fff', lineHeight: 1.2 }}>{nome}</div>
+          <div style={{ fontSize: 11, color: ORANGE, marginTop: 2, fontWeight: 600 }}>Fermata bus</div>
+        </div>
+      </div>
+      {routes && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+          {routes.split(/[\s;,]+/).filter(Boolean).map((r) => (
+            <span key={r} style={{
+              background: ORANGE + '20', border: `1px solid ${ORANGE}55`,
+              borderRadius: 5, padding: '2px 7px', fontSize: 10, fontWeight: 700, color: ORANGE,
+            }}>{r}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BusVehiclePopup({ bus }: { bus: BusVehicle }) {
+  return (
+    <div style={{ padding: '14px 18px 12px', minWidth: 180 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 8, paddingRight: 18 }}>
+        <div style={{
+          width: 36, height: 36, borderRadius: '50%',
+          background: ORANGE, border: '2px solid rgba(255,255,255,0.25)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 16, fontWeight: 800, color: '#fff', flexShrink: 0,
+        }}>
+          {bus.route}
+        </div>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 14, color: '#fff' }}>Linea {bus.route}</div>
+          <div style={{ fontSize: 11, color: ORANGE, marginTop: 2, fontWeight: 600 }}>Bus in servizio</div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Velocità</span>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 600 }}>{bus.speed} km/h</span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Direzione</span>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 600 }}>{Math.round(bus.bearing)}°</span>
+      </div>
+      <div style={{
+        marginTop: 10,
+        padding: '6px 0',
+        textAlign: 'center',
+        borderRadius: 8,
+        background: 'rgba(249,115,22,0.15)',
+        border: '1px solid rgba(249,115,22,0.3)',
+        fontSize: 11, fontWeight: 700, color: ORANGE,
+      }}>
+        ● In tempo reale
+      </div>
+    </div>
+  );
+}
+
+// ── Layer components ───────────────────────────────────────────────────────────
+
 function PointMarkers({ features, category, onSelect }: {
   features: MobilityFeature[];
   category: CategoryKey;
   onSelect: (f: MobilityFeature, c: CategoryKey) => void;
 }) {
-  const icon = createIcon(category);
+  const icon = createPointIcon(category);
   return (
     <>
       {features.map((f, i) => {
         const coords = f.geometry.coordinates as number[];
         return (
-          <Marker
-            key={i}
-            position={[coords[1], coords[0]]}
-            icon={icon}
-            eventHandlers={{ click: () => onSelect(f, category) }}
-          >
+          <Marker key={i} position={[coords[1], coords[0]]} icon={icon}
+            eventHandlers={{ click: () => onSelect(f, category) }}>
             <Popup closeButton>
-              <PopupContent feature={f} category={category} />
+              <FeaturePopup feature={f} category={category} />
             </Popup>
           </Marker>
         );
@@ -219,23 +282,15 @@ function ParkingZones({ features, onSelect }: {
   return (
     <>
       {features.map((f, i) => {
-        const rings = (f.geometry.coordinates as number[][][]);
-        const positions = rings[0].map((c) => [c[1], c[0]] as [number, number]);
+        const positions = (f.geometry.coordinates as number[][][])[0].map(
+          (c) => [c[1], c[0]] as [number, number]
+        );
         return (
-          <Polygon
-            key={i}
-            positions={positions}
-            pathOptions={{
-              fillColor: color,
-              fillOpacity: 0.12,
-              color,
-              weight: 1.5,
-              opacity: 0.6,
-            }}
-            eventHandlers={{ click: () => onSelect(f, 'parking') }}
-          >
+          <Polygon key={i} positions={positions}
+            pathOptions={{ fillColor: color, fillOpacity: 0.12, color, weight: 1.5, opacity: 0.6 }}
+            eventHandlers={{ click: () => onSelect(f, 'parking') }}>
             <Popup closeButton>
-              <PopupContent feature={f} category="parking" />
+              <FeaturePopup feature={f} category="parking" />
             </Popup>
           </Polygon>
         );
@@ -244,20 +299,51 @@ function ParkingZones({ features, onSelect }: {
   );
 }
 
-function StylesInjector() {
-  useEffect(() => { injectStyles(); }, []);
-  return null;
+function BusStopsLayer({ features }: { features: MobilityFeature[] }) {
+  return (
+    <>
+      {features.map((f, i) => {
+        const coords = f.geometry.coordinates as number[];
+        return (
+          <CircleMarker key={i} center={[coords[1], coords[0]]}
+            radius={5}
+            pathOptions={{
+              fillColor: ORANGE, fillOpacity: 0.75,
+              color: ORANGE, weight: 1.5, opacity: 0.9,
+            }}>
+            <Popup closeButton>
+              <BusStopPopup feature={f} />
+            </Popup>
+          </CircleMarker>
+        );
+      })}
+    </>
+  );
 }
 
-export default function MapView({ data, visibleCategories, selectedFeature, onFeatureSelect }: Props) {
+function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
+  return (
+    <>
+      {vehicles.map((bus) => {
+        const icon = createBusVehicleIcon(bus.route, bus.bearing);
+        return (
+          <Marker key={bus.id} position={[bus.lat, bus.lon]} icon={icon}>
+            <Popup closeButton>
+              <BusVehiclePopup bus={bus} />
+            </Popup>
+          </Marker>
+        );
+      })}
+    </>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────────
+
+export default function MapView({ data, busStops, busVehicles, visibleCategories, selectedFeature, onFeatureSelect }: Props) {
   return (
     <View style={styles.container}>
-      <MapContainer
-        center={CENTER}
-        zoom={14}
-        style={{ width: '100%', height: '100%' }}
-        zoomControl
-      >
+      <MapContainer center={CENTER} zoom={14} style={{ width: '100%', height: '100%' }} zoomControl>
         <StylesInjector />
         <TileLayer url={TILE_URL} attribution={TILE_ATTR} />
 
@@ -272,6 +358,12 @@ export default function MapView({ data, visibleCategories, selectedFeature, onFe
         )}
         {visibleCategories.has('parking') && (
           <ParkingZones features={data.parking.features} onSelect={onFeatureSelect} />
+        )}
+        {visibleCategories.has('busstops') && (
+          <BusStopsLayer features={busStops.features} />
+        )}
+        {visibleCategories.has('buses') && (
+          <LiveBusLayer vehicles={busVehicles} />
         )}
       </MapContainer>
     </View>

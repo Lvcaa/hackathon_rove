@@ -12,7 +12,7 @@ export interface MobilityCollection {
   features: MobilityFeature[];
 }
 
-export type CategoryKey = 'stations' | 'taxi' | 'carsharing' | 'parking';
+export type CategoryKey = 'stations' | 'taxi' | 'carsharing' | 'parking' | 'busstops' | 'buses';
 
 export interface MobilityData {
   stations: MobilityCollection;
@@ -21,9 +21,20 @@ export interface MobilityData {
   parking: MobilityCollection;
 }
 
+export interface BusVehicle {
+  id: string;
+  lat: number;
+  lon: number;
+  bearing: number;
+  route: string;
+  speed: number;
+}
+
 export interface Stats {
   stations: number;
   taxi: number;
   carsharing: number;
   parking_zones: number;
+  busstops?: number;
+  buses_live?: number;
 }

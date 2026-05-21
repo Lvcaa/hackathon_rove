@@ -8,7 +8,7 @@ interface Props {
   onToggle: (cat: CategoryKey) => void;
 }
 
-const CATEGORIES: CategoryKey[] = ['stations', 'taxi', 'carsharing', 'parking'];
+const CATEGORIES: CategoryKey[] = ['stations', 'taxi', 'carsharing', 'parking', 'busstops', 'buses'];
 
 export default function CategoryFilter({ visible, onToggle }: Props) {
   return (

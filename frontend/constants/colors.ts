@@ -9,6 +9,7 @@ export const Colors = {
   yellow: '#fbbf24',
   purple: '#a78bfa',
   green: '#34d399',
+  orange: '#f97316',
 } as const;
 
 export const CategoryColors: Record<string, string> = {
@@ -16,6 +17,8 @@ export const CategoryColors: Record<string, string> = {
   taxi: Colors.yellow,
   carsharing: Colors.purple,
   parking: Colors.green,
+  busstops: Colors.orange,
+  buses: Colors.orange,
 };
 
 export const CategoryIcons: Record<string, string> = {
@@ -23,6 +26,8 @@ export const CategoryIcons: Record<string, string> = {
   taxi: '🚕',
   carsharing: '🚗',
   parking: '🅿️',
+  busstops: '🚌',
+  buses: '🚍',
 };
 
 export const CategoryLabels: Record<string, string> = {
@@ -30,4 +35,6 @@ export const CategoryLabels: Record<string, string> = {
   taxi: 'Taxi',
   carsharing: 'Car Share',
   parking: 'Parcheggi',
+  busstops: 'Fermate bus',
+  buses: 'Bus in tempo reale',
 };

@@ -6,10 +6,12 @@ import { Stats } from '../types/mobility';
 interface Props { stats: Stats; }
 
 const CARDS = [
-  { key: 'stations' as const,      label: 'Stazioni',  icon: '🚂', color: Colors.cyan   },
-  { key: 'taxi' as const,          label: 'Taxi',       icon: '🚕', color: Colors.yellow },
-  { key: 'carsharing' as const,    label: 'Car share',  icon: '🚗', color: Colors.purple },
-  { key: 'parking_zones' as const, label: 'Parcheggi', icon: '🅿️', color: Colors.green  },
+  { key: 'stations' as const,      label: 'Stazioni',     icon: '🚂', color: Colors.cyan   },
+  { key: 'taxi' as const,          label: 'Taxi',          icon: '🚕', color: Colors.yellow },
+  { key: 'carsharing' as const,    label: 'Car share',     icon: '🚗', color: Colors.purple },
+  { key: 'parking_zones' as const, label: 'Parcheggi',    icon: '🅿️', color: Colors.green  },
+  { key: 'busstops' as const,      label: 'Fermate bus',  icon: '🚌', color: Colors.orange  },
+  { key: 'buses_live' as const,    label: 'Bus in corsa', icon: '🚍', color: Colors.orange  },
 ];
 
 export default function StatsCard({ stats }: Props) {
