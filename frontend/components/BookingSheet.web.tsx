@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef, CSSProperties } from 'react';
 import { useBooking } from '../hooks/useBooking';
+import { useRouting } from '../hooks/useRouting';
 import AIPlannerPanel from './AIPlannerPanel';
-import { RouteSuggestion } from '../types/routing';
+import ModeChips from './ModeChips';
+import { RouteSuggestion, MODE_META } from '../types/routing';
 import {
   ModalityOption, TrainModality, ParkingModality,
   TaxiModality, BikeSharingModality, TripBookResponse,
@@ -1152,7 +1154,7 @@ export default function BookingSheet({
       width: 'min(492px, calc(100vw - 48px))',
     }}>
       {/* Top row — squircle is fixed height matching the search bar */}
-      <div style={{ display: 'flex', flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+      <div style={{ display: 'flex', flexDirection: 'row', gap: 8, alignItems: 'flex-end' }}>
         {aiActive
           ? <SearchSquircle onToggle={() => setAiActive(false)} />
           : <AISquircle onToggle={() => setAiActive(true)} />
