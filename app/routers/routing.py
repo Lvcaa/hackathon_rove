@@ -257,11 +257,12 @@ def _leg(
     label_from: str,
     label_to: str,
     overhead_min: float = 0.0,
+    line_name: str | None = None,
 ) -> dict[str, Any]:
     """One route segment: distance, duration and a [lng, lat] polyline."""
     dist = haversine_m(frm["lat"], frm["lng"], to["lat"], to["lng"])
     duration = dist / SPEED[mode] + overhead_min
-    return {
+    leg_dict = {
         "mode":         mode,
         "from":         {"name": label_from, "lat": frm["lat"], "lng": frm["lng"]},
         "to":           {"name": label_to,   "lat": to["lat"],  "lng": to["lng"]},
@@ -269,6 +270,9 @@ def _leg(
         "duration_min": round(duration, 1),
         "polyline":     [[frm["lng"], frm["lat"]], [to["lng"], to["lat"]]],
     }
+    if line_name is not None:
+        leg_dict["line_name"] = line_name
+    return leg_dict
 
 
 def _suggestion(
@@ -337,7 +341,8 @@ def _enrich_drive_legs(suggestions: list[dict[str, Any]]) -> None:
 def _train_leg(o_st: dict[str, Any], d_st: dict[str, Any], leg: dict[str, Any],
                extra_min: float = 0.0) -> dict[str, Any]:
     """A single train segment between two stations, in route-leg shape."""
-    return {
+    line_name = trains.get_upcoming_train_info(o_st["code"], d_st["code"])
+    leg_dict = {
         "mode":         "train",
         "from":         {"name": o_st["name"], "lat": o_st["lat"], "lng": o_st["lng"]},
         "to":           {"name": d_st["name"], "lat": d_st["lat"], "lng": d_st["lng"]},
@@ -345,6 +350,9 @@ def _train_leg(o_st: dict[str, Any], d_st: dict[str, Any], leg: dict[str, Any],
         "duration_min": round(leg["duration_min"] + extra_min, 1),
         "polyline":     leg["polyline"],
     }
+    if line_name:
+        leg_dict["line_name"] = line_name
+    return leg_dict
 
 
 def _build_train(origin: dict[str, Any], dest: dict[str, Any]) -> dict[str, Any] | None:
@@ -420,15 +428,34 @@ def _build_suggestions(origin: dict[str, Any], dest: dict[str, Any]) -> list[dic
         # Skip if the walk to/from stops alone is longer than just walking to the destination,
         # or if both stops are basically at the same location as origin/destination.
         if walk_to_stop_m + walk_from_stop_m < straight_m * 1.4:
+            o_stop_id = o_stop.get("id")
+            d_stop_id = d_stop.get("id")
+            o_routes = transit._STOP_ROUTES.get(o_stop_id, set()) if o_stop_id else set()
+            d_routes = transit._STOP_ROUTES.get(d_stop_id, set()) if d_stop_id else set()
+            connecting = o_routes & d_routes
+            
+            display_routes = connecting if connecting else o_routes
+            if display_routes:
+                sorted_routes = sorted(display_routes, key=transit._route_sort_key)
+                if len(sorted_routes) == 1:
+                    bus_line_name = f"Linea {sorted_routes[0]}"
+                    summary_line = f"Bus {sorted_routes[0]}"
+                else:
+                    bus_line_name = f"Linee {', '.join(sorted_routes)}"
+                    summary_line = f"Bus {', '.join(sorted_routes)}"
+            else:
+                bus_line_name = "Bus"
+                summary_line = "Bus"
+
             legs = [
                 _leg("walk", origin, o_stop, label_from=here, label_to=o_stop["name"]),
                 _leg("bus", o_stop, d_stop, label_from=o_stop["name"],
-                     label_to=d_stop["name"], overhead_min=6.0),
+                     label_to=d_stop["name"], overhead_min=6.0, line_name=bus_line_name),
                 _leg("walk", d_stop, dest, label_from=d_stop["name"], label_to=dest["name"]),
             ]
             out.append(_suggestion(
                 "transit", "Bus urbano", "🚌",
-                f"Bus dalla fermata {o_stop['name']}",
+                f"{summary_line} da {o_stop['name']}",
                 legs, 1.50,
             ))
 

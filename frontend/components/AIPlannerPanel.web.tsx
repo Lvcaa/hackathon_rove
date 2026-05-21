@@ -98,7 +98,7 @@ function PlanLegs({ suggestion }: { suggestion: RouteSuggestion }) {
               flex: 1, fontSize: 11.5, color: 'rgba(255,255,255,0.82)',
               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>
-              {m.label} → {leg.to.name}
+              {leg.line_name || m.label} → {leg.to.name}
             </span>
             <span style={{ fontSize: 11, fontWeight: 700, color: m.color, flexShrink: 0 }}>
               {Math.round(leg.duration_min)}′

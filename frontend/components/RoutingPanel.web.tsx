@@ -86,11 +86,26 @@ function injectStyles() {
 
 // ── Leg sequence chips ─────────────────────────────────────────────────────────
 
+function getLegLabel(leg: RouteLeg): string {
+  if (!leg.line_name) return '';
+  if (leg.line_name.startsWith('Linea ')) {
+    return leg.line_name.substring(6);
+  }
+  if (leg.line_name.startsWith('Linee ')) {
+    return leg.line_name.substring(6);
+  }
+  if (leg.line_name.startsWith('Treno ')) {
+    return leg.line_name.substring(6);
+  }
+  return leg.line_name;
+}
+
 function LegSequence({ legs }: { legs: RouteLeg[] }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginTop: 9 }}>
       {legs.map((leg, i) => {
         const m = MODE_META[leg.mode];
+        const label = getLegLabel(leg);
         return (
           <React.Fragment key={i}>
             {i > 0 && (
@@ -103,6 +118,11 @@ function LegSequence({ legs }: { legs: RouteLeg[] }) {
               fontSize: 10, fontWeight: 700, color: m.color,
             }}>
               <span style={{ fontSize: 11 }}>{m.icon}</span>
+              {label && (
+                <span style={{ marginRight: 2, background: 'rgba(255,255,255,0.12)', padding: '0px 3px', borderRadius: 3, fontSize: 8.5 }}>
+                  {label}
+                </span>
+              )}
               <span>{Math.max(1, Math.round(leg.duration_min))}′</span>
             </span>
           </React.Fragment>
@@ -387,7 +407,7 @@ function NavCard({ route, target, arrivalEpoch, nowTs, progress, recalculating }
               fontSize: 11.5, fontWeight: 600, color: '#fff', marginTop: 1,
               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>
-              {MODE_META[nextLeg.mode].label} fino a {nextLeg.to.name}
+              {nextLeg.line_name || MODE_META[nextLeg.mode].label} fino a {nextLeg.to.name}
             </div>
           </div>
           <span style={{ fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.65)', flexShrink: 0 }}>

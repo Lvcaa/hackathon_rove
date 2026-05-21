@@ -862,6 +862,90 @@ def plan_train_leg(o_lat: float, o_lng: float,
     }
 
 
+def get_upcoming_train_info(o_code: str, d_code: str) -> str | None:
+    """Find the next upcoming train departing o_code towards d_code, and return its identifier."""
+    o_st = _STATION_BY_CODE.get(o_code)
+    d_st = _STATION_BY_CODE.get(d_code)
+    if not o_st or not d_st or o_st["line"] != d_st["line"]:
+        return None
+
+    now_ms = _time.time() * 1000
+    upcoming = []
+
+    o_railpos = o_st["railpos"]
+    d_railpos = d_st["railpos"]
+    increasing = o_railpos < d_railpos
+
+    for trip in _all_trips():
+        if trip["line"] != o_st["line"]:
+            continue
+
+        pts = trip["points"]
+        if len(pts) < 2:
+            continue
+
+        # Check direction of travel
+        start_pos = pts[0][0]
+        end_pos = pts[-1][0]
+        trip_increasing = start_pos < end_pos
+        if trip_increasing != increasing:
+            continue
+
+        # Find estimated time when the train is at o_railpos
+        dep_time_ms = None
+        for i in range(len(pts) - 1):
+            p0, t0 = pts[i]
+            p1, t1 = pts[i + 1]
+            if min(p0, p1) <= o_railpos <= max(p0, p1):
+                span = p1 - p0
+                if abs(span) > 0.0001:
+                    f = (o_railpos - p0) / span
+                    dep_time_ms = t0 + f * (t1 - t0)
+                else:
+                    dep_time_ms = t0
+                break
+
+        if dep_time_ms is not None and dep_time_ms >= now_ms - 120_000:
+            upcoming.append((dep_time_ms, trip))
+
+    if upcoming:
+        upcoming.sort(key=lambda x: x[0])
+        next_trip = upcoming[0][1]
+
+        brand = next_trip.get("brand")
+        num = next_trip.get("number", "")
+
+        brand_meta = BRANDS.get(brand)
+        brand_label = brand_meta["label"] if brand_meta else ""
+
+        if num:
+            if brand == "regionale_v" and not num.startswith("RV"):
+                return f"RV {num}"
+            elif brand == "regionale" and not num.startswith("RE") and not num.startswith("R"):
+                return f"Regionale {num}"
+            elif brand == "frecciarossa" and not num.startswith("FR"):
+                return f"Frecciarossa {num}"
+            elif brand == "italo" and not num.startswith("ITA") and not num.startswith("Italo"):
+                return f"Italo {num}"
+            elif brand == "eurocity" and not num.startswith("EC"):
+                return f"EuroCity {num}"
+            elif brand == "trentino":
+                return f"Treno FTM {num}"
+            elif brand == "valsugana":
+                return f"Treno Valsugana {num}"
+            return f"{brand_label} {num}" if brand_label and brand_label not in num else num
+
+        return brand_label or "Treno"
+
+    # Fallback to line names
+    if o_st["line"] == "ftm":
+        return "Treno FTM (Trento-Malè)"
+    elif o_st["line"] == "valsugana":
+        return "Treno Valsugana"
+    else:
+        return "Treno Brennero"
+
+
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------

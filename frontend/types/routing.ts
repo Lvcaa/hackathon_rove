@@ -15,6 +15,7 @@ export interface RouteLeg {
   distance_m: number;
   duration_min: number;
   polyline: [number, number][];   // [lng, lat] pairs
+  line_name?: string;
 }
 
 export interface RouteSuggestion {
