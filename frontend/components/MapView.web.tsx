@@ -926,9 +926,12 @@ function createDestIcon() {
 }
 
 // Frames the whole itinerary in view, leaving room for the routing panel
-// that sits over the top-left of the map.
+// that sits over the top-left of the map. Fits only when the destination
+// changes — live re-routes to the same destination won't jolt the map.
 function FitRoute({ route }: { route: RouteSuggestion }) {
   const map = useMap();
+  const dest = route.legs[route.legs.length - 1]?.to;
+  const destKey = dest ? `${dest.lat.toFixed(5)},${dest.lng.toFixed(5)}` : '';
   useEffect(() => {
     const pts: [number, number][] = [];
     for (const leg of route.legs) {
@@ -941,7 +944,8 @@ function FitRoute({ route }: { route: RouteSuggestion }) {
         maxZoom: 16,
       });
     }
-  }, [route, map]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [destKey, map]);
   return null;
 }
 

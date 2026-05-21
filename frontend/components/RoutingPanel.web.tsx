@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouting } from '../hooks/useRouting';
 import { useDestinationSearch } from '../hooks/useDestinationSearch';
 import { LiveLocation, LocationStatus } from '../hooks/useLiveLocation';
@@ -21,6 +21,37 @@ interface Props {
 
 const ACCENT = '#00e5ff';
 
+// Live re-routing — refetch only after the user has moved a meaningful
+// distance, and never more often than this, so GPS jitter can't spam OSRM.
+const REROUTE_DIST_M = 35;
+const REROUTE_MIN_MS = 7000;
+
+// ── Geo / formatting helpers ───────────────────────────────────────────────────
+
+function distM(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6_371_000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+}
+
+const fmtCost = (eur: number) =>
+  eur <= 0 ? 'Gratis' : `€ ${eur.toFixed(2).replace('.', ',')}`;
+
+const fmtDist = (m: number) =>
+  m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
+
+const fmtDur = (min: number) => `${Math.max(1, Math.round(min))} min`;
+
+const fmtClock = (epoch: number) => {
+  const d = new Date(epoch);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
 // ── CSS injection ─────────────────────────────────────────────────────────────
 
 function injectStyles() {
@@ -37,8 +68,10 @@ function injectStyles() {
       to   { opacity: 1; transform: translateY(0); }
     }
     @keyframes cs-route-spin { to { transform: rotate(360deg); } }
-    .cs-route-panel { animation: cs-route-in 0.34s cubic-bezier(0.16,1,0.3,1) both; }
-    .cs-route-card  { animation: cs-route-card-in 0.26s ease both; }
+    @keyframes cs-route-pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
+    .cs-route-panel  { animation: cs-route-in 0.34s cubic-bezier(0.16,1,0.3,1) both; }
+    .cs-route-card   { animation: cs-route-card-in 0.26s ease both; }
+    .cs-route-recalc { animation: cs-route-pulse 1.1s ease-in-out infinite; }
     .cs-route-scroll::-webkit-scrollbar,
     .cs-route-results::-webkit-scrollbar { width: 6px; }
     .cs-route-scroll::-webkit-scrollbar-thumb,
@@ -50,16 +83,6 @@ function injectStyles() {
   `;
   document.head.appendChild(s);
 }
-
-// ── Formatting ─────────────────────────────────────────────────────────────────
-
-const fmtCost = (eur: number) =>
-  eur <= 0 ? 'Gratis' : `€ ${eur.toFixed(2).replace('.', ',')}`;
-
-const fmtDist = (m: number) =>
-  m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
-
-const fmtDur = (min: number) => `${Math.max(1, Math.round(min))} min`;
 
 // ── Leg sequence chips ─────────────────────────────────────────────────────────
 
@@ -275,6 +298,107 @@ function DestinationSearch({ onPick }: { onPick: (p: PlaceResult) => void }) {
   );
 }
 
+// ── Live navigation card ────────────────────────────────────────────────────────
+
+function NavCard({ route, target, arrivalEpoch, nowTs, progress, recalculating }: {
+  route: RouteSuggestion;
+  target: RouteTarget;
+  arrivalEpoch: number | null;
+  nowTs: number;
+  progress: number;
+  recalculating: boolean;
+}) {
+  const remainingMin = arrivalEpoch
+    ? Math.max(0, Math.round((arrivalEpoch - nowTs) / 60000))
+    : Math.round(route.total_duration_min);
+  const nextLeg = route.legs[0];
+  const pct = Math.round(progress * 100);
+
+  return (
+    <div className="cs-route-card" style={{ padding: '4px 2px' }}>
+      {/* Mode + recalculating indicator */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+        <div style={{
+          width: 34, height: 34, borderRadius: 9, flexShrink: 0,
+          background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17,
+        }}>
+          {route.icon}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{route.label}</div>
+          <div style={{ fontSize: 10.5, color: '#34d399', fontWeight: 700, marginTop: 1 }}>
+            ● In viaggio
+          </div>
+        </div>
+        {recalculating && (
+          <span className="cs-route-recalc" style={{
+            fontSize: 9.5, fontWeight: 800, letterSpacing: '0.04em', color: ACCENT,
+          }}>RICALCOLO…</span>
+        )}
+      </div>
+
+      {/* ETA */}
+      <div style={{ textAlign: 'center', padding: '16px 0 13px' }}>
+        <div style={{
+          fontSize: 10, fontWeight: 800, letterSpacing: '0.1em',
+          color: 'rgba(255,255,255,0.42)',
+        }}>ARRIVO STIMATO</div>
+        <div style={{ fontSize: 36, fontWeight: 800, color: '#fff', lineHeight: 1.05, marginTop: 4 }}>
+          {arrivalEpoch ? fmtClock(arrivalEpoch) : '—:—'}
+        </div>
+        <div style={{ fontSize: 13, color: ACCENT, fontWeight: 700, marginTop: 3 }}>
+          tra {remainingMin} min · {fmtDist(route.total_distance_m)}
+        </div>
+      </div>
+
+      {/* Progress */}
+      <div style={{ height: 8, borderRadius: 4, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+        <div style={{
+          height: '100%', width: `${pct}%`,
+          background: `linear-gradient(90deg, ${ACCENT}, #0891b2)`,
+          borderRadius: 4, transition: 'width 0.6s ease',
+        }} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5 }}>
+        <span style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>
+          {pct}% completato
+        </span>
+        <span style={{
+          fontSize: 9.5, color: 'rgba(255,255,255,0.4)', fontWeight: 700,
+          maxWidth: 170, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>→ {target.name}</span>
+      </div>
+
+      {/* Next leg */}
+      {nextLeg && (
+        <div style={{
+          marginTop: 13, display: 'flex', alignItems: 'center', gap: 9,
+          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: 10, padding: '9px 11px',
+        }}>
+          <span style={{ fontSize: 16, flexShrink: 0 }}>{MODE_META[nextLeg.mode].icon}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 8.5, fontWeight: 800, letterSpacing: '0.06em',
+              color: 'rgba(255,255,255,0.4)',
+            }}>PROSSIMO PASSO</div>
+            <div style={{
+              fontSize: 11.5, fontWeight: 600, color: '#fff', marginTop: 1,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {MODE_META[nextLeg.mode].label} fino a {nextLeg.to.name}
+            </div>
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.65)', flexShrink: 0 }}>
+            {Math.max(1, Math.round(nextLeg.duration_min))}′
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function RoutingPanel({
@@ -283,45 +407,101 @@ export default function RoutingPanel({
 }: Props) {
   const { status, response, error, fetchRoutes, reset } = useRouting();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [liveNav, setLiveNav] = useState(false);
+  const [arrivalEpoch, setArrivalEpoch] = useState<number | null>(null);
+  const [nowTs, setNowTs] = useState(() => Date.now());
+
+  const selected = response?.suggestions.find((s) => s.id === selectedId) ?? null;
+
+  // Records the origin/destination of the last fetch, to decide when a live
+  // re-route is warranted; and the route distance when navigation started.
+  const lastFetch = useRef<{ destKey: string; lat: number; lng: number; t: number } | null>(null);
+  const tripStartDist = useRef<number | null>(null);
 
   useEffect(() => { injectStyles(); }, []);
 
-  // Fetch once per destination, as soon as a live origin is available.
-  const fetchedFor = useRef<string | null>(null);
+  // Fetch on a new destination, or — while navigating — once the user has
+  // moved far enough from the position the current route was built from.
   useEffect(() => {
     if (!target) {
-      fetchedFor.current = null;
+      lastFetch.current = null;
       setSelectedId(null);
       reset();
       return;
     }
     if (!origin) return;
-    const key = `${target.lat.toFixed(5)},${target.lng.toFixed(5)}`;
-    if (fetchedFor.current === key) return;
-    fetchedFor.current = key;
-    setSelectedId(null);
-    fetchRoutes({ lat: origin.lat, lng: origin.lng }, target);
-  }, [target, origin, fetchRoutes, reset]);
 
-  // Auto-select the recommended itinerary when results arrive.
+    const destKey = `${target.lat.toFixed(5)},${target.lng.toFixed(5)}`;
+    const last = lastFetch.current;
+    const destChanged = !last || last.destKey !== destKey;
+
+    let shouldFetch = destChanged;
+    if (!destChanged && liveNav && last) {
+      const moved = distM(origin, { lat: last.lat, lng: last.lng });
+      if (moved >= REROUTE_DIST_M && Date.now() - last.t >= REROUTE_MIN_MS) {
+        shouldFetch = true;
+      }
+    }
+    if (!shouldFetch) return;
+
+    if (destChanged) setSelectedId(null);
+    lastFetch.current = { destKey, lat: origin.lat, lng: origin.lng, t: Date.now() };
+    fetchRoutes({ lat: origin.lat, lng: origin.lng }, target);
+  }, [target, origin, liveNav, fetchRoutes, reset]);
+
+  // When results arrive, keep the chosen modality if it still exists
+  // (so a live re-route doesn't snap the user back to "recommended").
   useEffect(() => {
     if (status === 'ready' && response) {
-      const rec = response.suggestions.find((s) => s.recommended) ?? response.suggestions[0];
-      setSelectedId(rec?.id ?? null);
+      setSelectedId((prev) =>
+        prev && response.suggestions.some((s) => s.id === prev)
+          ? prev
+          : (response.suggestions.find((s) => s.recommended)
+             ?? response.suggestions[0])?.id ?? null,
+      );
     }
   }, [status, response]);
 
   // Surface the selected itinerary to the map.
   useEffect(() => {
-    const sel = response?.suggestions.find((s) => s.id === selectedId) ?? null;
-    onRouteSelect(sel);
-  }, [selectedId, response, onRouteSelect]);
+    onRouteSelect(selected);
+  }, [selected, onRouteSelect]);
+
+  // Refresh the arrival estimate on every (re-)route while navigating.
+  useEffect(() => {
+    if (liveNav && selected) {
+      setArrivalEpoch(Date.now() + selected.total_duration_min * 60000);
+    }
+  }, [liveNav, selected]);
+
+  // Tick the clock so the countdown stays current between re-routes.
+  useEffect(() => {
+    if (!liveNav) return;
+    const id = setInterval(() => setNowTs(Date.now()), 15000);
+    return () => clearInterval(id);
+  }, [liveNav]);
 
   // Clear the drawn route when the panel goes away.
   useEffect(() => () => { onRouteSelect(null); reset(); }, [onRouteSelect, reset]);
 
-  const selected = response?.suggestions.find((s) => s.id === selectedId) ?? null;
+  const startNav = useCallback(() => {
+    if (!selected) return;
+    tripStartDist.current = selected.total_distance_m;
+    setArrivalEpoch(Date.now() + selected.total_duration_min * 60000);
+    setNowTs(Date.now());
+    setLiveNav(true);
+  }, [selected]);
+
+  const endNav = useCallback(() => {
+    setLiveNav(false);
+    tripStartDist.current = null;
+    setArrivalEpoch(null);
+  }, []);
+
   const noLocation = locationStatus === 'idle' || locationStatus === 'error';
+  const progress = (tripStartDist.current && selected)
+    ? Math.min(1, Math.max(0, 1 - selected.total_distance_m / tripStartDist.current))
+    : 0;
 
   return (
     <div
@@ -349,7 +529,7 @@ export default function RoutingPanel({
         <span style={{
           flex: 1, fontSize: 11, fontWeight: 800, letterSpacing: '0.09em',
           color: 'rgba(255,255,255,0.7)',
-        }}>INDICAZIONI</span>
+        }}>{liveNav ? 'NAVIGAZIONE' : 'INDICAZIONI'}</span>
         <div
           onClick={onClose}
           title="Chiudi"
@@ -362,106 +542,147 @@ export default function RoutingPanel({
         >×</div>
       </div>
 
-      {/* Search + itinerary */}
-      <div style={{
-        padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.07)',
-        display: 'flex', flexDirection: 'column', gap: 12,
-      }}>
-        <DestinationSearch onPick={(p) => onTargetChange({ name: p.name, lat: p.lat, lng: p.lng })} />
-        {target && (
-          <div>
-            <ItineraryHeader
-              originLabel={origin ? 'La tua posizione' : 'Posizione non attiva'}
-              destLabel={target.name}
-            />
-            {response && (
-              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 9, fontWeight: 600 }}>
-                {fmtDist(response.straight_line_m)} in linea d'aria · {response.suggestions.length} opzioni
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      {/* Search + itinerary (hidden during live navigation) */}
+      {!liveNav && (
+        <div style={{
+          padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.07)',
+          display: 'flex', flexDirection: 'column', gap: 12,
+        }}>
+          <DestinationSearch onPick={(p) => onTargetChange({ name: p.name, lat: p.lat, lng: p.lng })} />
+          {target && (
+            <div>
+              <ItineraryHeader
+                originLabel={origin ? 'La tua posizione' : 'Posizione non attiva'}
+                destLabel={target.name}
+              />
+              {response && (
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 9, fontWeight: 600 }}>
+                  {fmtDist(response.straight_line_m)} in linea d'aria · {response.suggestions.length} opzioni
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Body */}
       <div
         className="cs-route-scroll"
         style={{ overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}
       >
-        {!target && (
-          <div style={{ textAlign: 'center', padding: '18px 8px' }}>
-            <div style={{ fontSize: 26, marginBottom: 8 }}>🗺️</div>
-            <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)', fontWeight: 600, lineHeight: 1.5 }}>
-              Cerca una destinazione qui sopra, oppure tocca un punto sulla mappa per ottenere le indicazioni.
-            </div>
-          </div>
-        )}
-
-        {target && noLocation && (
-          <div style={{ textAlign: 'center', padding: '14px 4px' }}>
-            <div style={{ fontSize: 26, marginBottom: 8 }}>📍</div>
-            <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.75)', fontWeight: 600, lineHeight: 1.45 }}>
-              {locationStatus === 'error'
-                ? 'Posizione non disponibile.'
-                : 'Attiva la geolocalizzazione per calcolare il percorso dalla tua posizione.'}
-            </div>
-            <div
-              onClick={onEnableLocation}
-              style={{
-                marginTop: 12, background: ACCENT + '1c', border: `1px solid ${ACCENT}77`,
-                borderRadius: 9, padding: '9px 0', textAlign: 'center', cursor: 'pointer',
-                fontSize: 12, fontWeight: 800, color: ACCENT,
-              }}
-            >
-              {locationStatus === 'error' ? 'Riprova' : 'Attiva la posizione'}
-            </div>
-          </div>
-        )}
-
-        {target && !noLocation && locationStatus === 'locating' && !response && (
-          <div style={{ textAlign: 'center', padding: '20px 4px', color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: 600 }}>
-            <div style={{
-              width: 22, height: 22, margin: '0 auto 10px', borderRadius: '50%',
-              border: '2px solid rgba(255,255,255,0.18)', borderTopColor: ACCENT,
-              animation: 'cs-route-spin 0.8s linear infinite',
-            }} />
-            Individuazione della posizione…
-          </div>
-        )}
-
-        {target && status === 'loading' && (
-          <div style={{ textAlign: 'center', padding: '20px 4px', color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: 600 }}>
-            <div style={{
-              width: 22, height: 22, margin: '0 auto 10px', borderRadius: '50%',
-              border: '2px solid rgba(255,255,255,0.18)', borderTopColor: ACCENT,
-              animation: 'cs-route-spin 0.8s linear infinite',
-            }} />
-            Calcolo dei percorsi…
-          </div>
-        )}
-
-        {target && status === 'error' && (
-          <div style={{ textAlign: 'center', padding: '16px 4px', color: '#f87171', fontSize: 12, fontWeight: 600 }}>
-            {error ?? 'Impossibile calcolare il percorso'}
-          </div>
-        )}
-
-        {target && status === 'ready' && response && response.suggestions.map((s, i) => (
-          <SuggestionCard
-            key={s.id}
-            s={s}
-            index={i}
-            selected={s.id === selectedId}
-            onSelect={() => setSelectedId(s.id)}
+        {liveNav && selected && target ? (
+          <NavCard
+            route={selected}
+            target={target}
+            arrivalEpoch={arrivalEpoch}
+            nowTs={nowTs}
+            progress={progress}
+            recalculating={status === 'loading'}
           />
-        ))}
+        ) : (
+          <>
+            {!target && (
+              <div style={{ textAlign: 'center', padding: '18px 8px' }}>
+                <div style={{ fontSize: 26, marginBottom: 8 }}>🗺️</div>
+                <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)', fontWeight: 600, lineHeight: 1.5 }}>
+                  Cerca una destinazione qui sopra, oppure tocca un punto sulla mappa per ottenere le indicazioni.
+                </div>
+              </div>
+            )}
+
+            {target && noLocation && (
+              <div style={{ textAlign: 'center', padding: '14px 4px' }}>
+                <div style={{ fontSize: 26, marginBottom: 8 }}>📍</div>
+                <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.75)', fontWeight: 600, lineHeight: 1.45 }}>
+                  {locationStatus === 'error'
+                    ? 'Posizione non disponibile.'
+                    : 'Attiva la geolocalizzazione per calcolare il percorso dalla tua posizione.'}
+                </div>
+                <div
+                  onClick={onEnableLocation}
+                  style={{
+                    marginTop: 12, background: ACCENT + '1c', border: `1px solid ${ACCENT}77`,
+                    borderRadius: 9, padding: '9px 0', textAlign: 'center', cursor: 'pointer',
+                    fontSize: 12, fontWeight: 800, color: ACCENT,
+                  }}
+                >
+                  {locationStatus === 'error' ? 'Riprova' : 'Attiva la posizione'}
+                </div>
+              </div>
+            )}
+
+            {target && !noLocation && locationStatus === 'locating' && !response && (
+              <div style={{ textAlign: 'center', padding: '20px 4px', color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: 600 }}>
+                <div style={{
+                  width: 22, height: 22, margin: '0 auto 10px', borderRadius: '50%',
+                  border: '2px solid rgba(255,255,255,0.18)', borderTopColor: ACCENT,
+                  animation: 'cs-route-spin 0.8s linear infinite',
+                }} />
+                Individuazione della posizione…
+              </div>
+            )}
+
+            {target && status === 'loading' && (
+              <div style={{ textAlign: 'center', padding: '20px 4px', color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: 600 }}>
+                <div style={{
+                  width: 22, height: 22, margin: '0 auto 10px', borderRadius: '50%',
+                  border: '2px solid rgba(255,255,255,0.18)', borderTopColor: ACCENT,
+                  animation: 'cs-route-spin 0.8s linear infinite',
+                }} />
+                Calcolo dei percorsi…
+              </div>
+            )}
+
+            {target && status === 'error' && (
+              <div style={{ textAlign: 'center', padding: '16px 4px', color: '#f87171', fontSize: 12, fontWeight: 600 }}>
+                {error ?? 'Impossibile calcolare il percorso'}
+              </div>
+            )}
+
+            {target && status === 'ready' && response && response.suggestions.map((s, i) => (
+              <SuggestionCard
+                key={s.id}
+                s={s}
+                index={i}
+                selected={s.id === selectedId}
+                onSelect={() => setSelectedId(s.id)}
+              />
+            ))}
+          </>
+        )}
       </div>
 
-      {/* Footer — book the selected itinerary */}
-      {selected && target && (
-        <div style={{ padding: '11px 14px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+      {/* Footer */}
+      {liveNav && target ? (
+        <div style={{
+          display: 'flex', gap: 8, padding: '11px 14px',
+          borderTop: '1px solid rgba(255,255,255,0.08)',
+        }}>
           <div
             onClick={() => onBook(target.name)}
+            style={{
+              flex: 1, background: ACCENT + '1c', border: `1px solid ${ACCENT}77`,
+              borderRadius: 10, padding: '10px 0', textAlign: 'center', cursor: 'pointer',
+              fontSize: 12.5, fontWeight: 800, color: ACCENT,
+            }}
+          >
+            Prenota
+          </div>
+          <div
+            onClick={endNav}
+            style={{
+              flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)',
+              borderRadius: 10, padding: '10px 0', textAlign: 'center', cursor: 'pointer',
+              fontSize: 12.5, fontWeight: 800, color: 'rgba(255,255,255,0.75)',
+            }}
+          >
+            Termina
+          </div>
+        </div>
+      ) : selected && target ? (
+        <div style={{ padding: '11px 14px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+          <div
+            onClick={startNav}
             style={{
               background: `linear-gradient(135deg, ${ACCENT}, #0891b2)`,
               borderRadius: 10, padding: '11px 0', textAlign: 'center', cursor: 'pointer',
@@ -469,10 +690,10 @@ export default function RoutingPanel({
               boxShadow: `0 6px 20px ${ACCENT}3d`,
             }}
           >
-            Prenota · {selected.label} · {fmtDur(selected.total_duration_min)}
+            ▶ Avvia navigazione · {selected.label}
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
