@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useMobilityData } from '../hooks/useMobilityData';
 import { Stats } from '../types/mobility';
 
@@ -108,7 +108,7 @@ function TypeBadge({ type }: { type: string }) {
 
 // ── Main export ────────────────────────────────────────────────────────────────
 export default function DashboardScreen() {
-  const { stats } = useMobilityData();
+  const { stats, data } = useMobilityData();
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [parking, setParking] = useState<DashboardData | null>(null);
   const [form, setForm] = useState<typeof EMPTY_FORM>(EMPTY_FORM);
@@ -118,17 +118,54 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     adminFetch('/admin/dashboard')
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`/admin/dashboard returned ${r.status}: ${await r.text()}`);
+        return r.json();
+      })
       .then((d) => setParking(d))
-      .catch(() => {});
+      .catch((e) => { console.error('parking fetch failed:', e); setError(String(e)); });
   }, []);
 
   const loadDestinations = useCallback(() => {
     adminFetch('/admin/destinations')
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`/admin/destinations returned ${r.status}: ${await r.text()}`);
+        return r.json();
+      })
       .then((d) => setDestinations(d.destinations ?? []))
-      .catch(() => setError('Errore nel caricamento delle destinazioni'));
+      .catch((e) => { console.error('destinations fetch failed:', e); setError(String(e)); });
   }, []);
+
+  // Public-data fallback: build a list from mobility features when no admin
+  // destinations are loaded yet (or auth failed). Keeps the dashboard useful
+  // even without admin credentials.
+  const publicRows = useMemo(() => {
+    if (destinations.length > 0) return [];
+    const rows: { id: string; name: string; type: string; lat: number; lng: number }[] = [];
+    const seen = new Set<string>();
+    const collect = (cat: string, features: any[]) => {
+      features.forEach((f, i) => {
+        const p = f.properties ?? {};
+        const name = String(p.nome || p.name || p.via || p.zona || p.descrizione || '').trim();
+        if (!name || seen.has(name.toLowerCase())) return;
+        seen.add(name.toLowerCase());
+        const coords = f.geometry?.type === 'Point'
+          ? (f.geometry.coordinates as number[])
+          : null;
+        rows.push({
+          id: `${cat}-${i}`,
+          name,
+          type: cat,
+          lat: coords ? coords[1] : 0,
+          lng: coords ? coords[0] : 0,
+        });
+      });
+    };
+    if (data?.stations?.features)   collect('station',    data.stations.features);
+    if (data?.taxi?.features)       collect('taxi',       data.taxi.features);
+    if (data?.carsharing?.features) collect('carsharing', data.carsharing.features);
+    return rows;
+  }, [data, destinations.length]);
 
   useEffect(() => { loadDestinations(); }, [loadDestinations]);
 
@@ -191,6 +228,17 @@ export default function DashboardScreen() {
         <p style={{ margin: 0, fontSize: 13, color: C.muted }}>Pannello amministratore</p>
       </div>
 
+      {/* Error banner — visible when admin endpoints fail */}
+      {error && !editId && (
+        <div style={{
+          background: C.red + '14', border: `1px solid ${C.red}33`,
+          borderRadius: 10, padding: '10px 16px', marginBottom: 20,
+          color: C.red, fontSize: 12,
+        }}>
+          ⚠ {error}
+        </div>
+      )}
+
       {/* Stat cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px,1fr))', gap: 12, marginBottom: 36 }}>
         {STAT_CARDS.map((c) => (
@@ -210,7 +258,7 @@ export default function DashboardScreen() {
           <div>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Punti di interesse &amp; parcheggi</h2>
             <p style={{ margin: '2px 0 0', fontSize: 12, color: C.muted }}>
-              {destinations.length} destinazioni
+              {destinations.length + publicRows.length} luoghi
               {parking?.summary && (
                 <span style={{ marginLeft: 10 }}>
                   · {parking.summary.configured_zones}/{parking.summary.total_zones} parcheggi configurati
@@ -377,10 +425,30 @@ export default function DashboardScreen() {
                   </tr>
                 );
               })}
-              {destinations.length === 0 && (!parking?.zones || parking.zones.length === 0) && (
+              {/* ── Public mobility data (fallback when admin destinations empty) ── */}
+              {publicRows.map((d) => (
+                <tr key={d.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: '12px 20px', fontWeight: 600 }}>{d.name}</td>
+                  <td style={{ padding: '12px 20px' }}><TypeBadge type={d.type} /></td>
+                  <td style={{ padding: '12px 20px', fontFamily: 'monospace', fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>
+                    {d.lat ? `${d.lat.toFixed(4)}, ${d.lng.toFixed(4)}` : '—'}
+                  </td>
+                  <td style={{ padding: '12px 20px' }}>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>—</span>
+                  </td>
+                  <td style={{ padding: '12px 20px' }}>
+                    <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+                      color: 'rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.04)',
+                      border: `1px solid ${C.border}`, borderRadius: 5, padding: '2px 7px',
+                    }}>solo lettura</span>
+                  </td>
+                </tr>
+              ))}
+
+              {destinations.length === 0 && publicRows.length === 0 && (!parking?.zones || parking.zones.length === 0) && (
                 <tr>
                   <td colSpan={5} style={{ padding: '32px 24px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
-                    Nessun dato disponibile
+                    Caricamento dati...
                   </td>
                 </tr>
               )}
