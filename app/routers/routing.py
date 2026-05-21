@@ -12,12 +12,14 @@ POST /api/routing/suggest  →  ranked list of multimodal itineraries.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from rapidfuzz import fuzz, process
 
+from app import osrm
 from app.database import get_db
 from app.geo import haversine_m
 from app.routers import mobility, transit
@@ -190,6 +192,41 @@ def _suggestion(
     }
 
 
+def _enrich_walk_legs(suggestions: list[dict[str, Any]]) -> None:
+    """Replace each walking leg's straight line with real pavement geometry.
+
+    Unique origin/destination pairs are resolved concurrently against the OSRM
+    foot-routing service; any leg the service can't resolve keeps its straight
+    line. Suggestion totals are recomputed afterwards by the caller.
+    """
+    jobs: dict[tuple[float, float, float, float], list[dict[str, Any]]] = {}
+    for s in suggestions:
+        for leg in s["legs"]:
+            if leg["mode"] != "walk":
+                continue
+            frm, to = leg["from"], leg["to"]
+            key = (
+                round(frm["lat"], 5), round(frm["lng"], 5),
+                round(to["lat"], 5), round(to["lng"], 5),
+            )
+            jobs.setdefault(key, []).append(leg)
+
+    if not jobs:
+        return
+
+    def fetch(key: tuple[float, float, float, float]):
+        return key, osrm.walk_route(*key)
+
+    with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
+        for key, geom in pool.map(fetch, list(jobs.keys())):
+            if geom is None:
+                continue
+            for leg in jobs[key]:
+                leg["polyline"]     = geom["polyline"]
+                leg["distance_m"]   = round(geom["distance_m"])
+                leg["duration_min"] = round(geom["duration_min"], 1)
+
+
 # ---------------------------------------------------------------------------
 # Itinerary builders
 # ---------------------------------------------------------------------------
@@ -261,6 +298,15 @@ def _build_suggestions(origin: dict[str, Any], dest: dict[str, Any]) -> list[dic
         f"Taxi diretto a {dest['name']}",
         [taxi], 3.50 + taxi["distance_m"] / 1000 * 1.30,
     ))
+
+    # Upgrade walking legs to real pavement geometry, then recompute totals so
+    # the ranking reflects the (slightly longer) on-street distances.
+    _enrich_walk_legs(out)
+    for s in out:
+        s["total_distance_m"] = sum(leg["distance_m"] for leg in s["legs"])
+        s["total_duration_min"] = round(
+            sum(leg["duration_min"] for leg in s["legs"]), 1
+        )
 
     # Rank by total travel time; flag the fastest and the cheapest.
     out.sort(key=lambda s: s["total_duration_min"])
