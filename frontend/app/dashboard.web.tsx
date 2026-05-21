@@ -242,7 +242,7 @@ export default function DashboardScreen() {
       {/* Stat cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px,1fr))', gap: 12, marginBottom: 36 }}>
         {STAT_CARDS.map((c) => (
-          <StatCard key={c.key} label={c.label} icon={c.icon} color={c.color} value={stats[c.key]} />
+          <StatCard key={c.key} label={c.label} icon={c.icon} color={c.color} value={stats[c.key] ?? 0} />
         ))}
       </div>
 
