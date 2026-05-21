@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, CSSProperties } from 'react';
 import { useBooking } from '../hooks/useBooking';
+import AIChatBubble from './AIChatBubble.web';
 import {
   ModalityOption, TrainModality, ParkingModality,
   TaxiModality, BikeSharingModality, TripBookResponse,
@@ -922,7 +923,7 @@ interface Props {
 }
 
 export default function BookingSheet({ onRouteReady, searchTrigger }: Props) {
-  const { state, search, book, dismiss } = useBooking();
+  const { state, search, book, dismiss, setConfirmedFromAI } = useBooking();
   const [query, setQuery] = useState('');
   const lastNonce = useRef<number | null>(null);
 
@@ -970,6 +971,21 @@ export default function BookingSheet({ onRouteReady, searchTrigger }: Props) {
         />
       )}
       <SearchBar onSearch={handleSearch} />
+      {state.phase === 'idle' && (
+        <>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            margin: '0 4px',
+          }}>
+            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+            <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.3)', fontFamily: "'Inter', system-ui, sans-serif" }}>
+              oppure
+            </span>
+            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+          </div>
+          <AIChatBubble onConfirmed={setConfirmedFromAI} />
+        </>
+      )}
     </div>
   );
 }

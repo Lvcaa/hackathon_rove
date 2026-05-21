@@ -129,34 +129,24 @@ def _new_option(dest_key: str, modality: str, expires_at: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# /search — Discovery phase
+# Internal business logic (callable without HTTP or artificial delays)
 # ---------------------------------------------------------------------------
 
 
-@router.post("/search")
-async def search_trips(payload: SearchPayload) -> dict[str, Any]:
-    """
-    Returns an array of independent bookable modalities (train, parking, taxi,
-    bike_sharing).  Each has its own option_id so the client can book exactly
-    one without touching the others.  Simulated 600 ms discovery delay.
-    """
-    await asyncio.sleep(0.6)
-
-    dest     = _resolve_dest(payload.destination)
-    dest_key = payload.destination.strip().lower()
+def _run_search_logic(destination: str) -> dict[str, Any]:
+    dest     = _resolve_dest(destination)
+    dest_key = destination.strip().lower()
     now      = _now_utc()
     expires_at = _iso(now + timedelta(minutes=10))
 
     with _lock:
-        # Snapshot live availability atomically
-        train_avail   = _RESOURCES["train_seats"]["available"]
-        train_total   = _RESOURCES["train_seats"]["total"]
-        park_avail    = _RESOURCES["parking_stazione"]["available"]
-        park_total    = _RESOURCES["parking_stazione"]["total"]
-        bike_avail    = _RESOURCES["bike_stazione"]["available_bikes"]
-        bike_docks    = _RESOURCES["bike_stazione"]["available_docks"]
+        train_avail = _RESOURCES["train_seats"]["available"]
+        train_total = _RESOURCES["train_seats"]["total"]
+        park_avail  = _RESOURCES["parking_stazione"]["available"]
+        park_total  = _RESOURCES["parking_stazione"]["total"]
+        bike_avail  = _RESOURCES["bike_stazione"]["available_bikes"]
+        bike_docks  = _RESOURCES["bike_stazione"]["available_docks"]
 
-        # Register one option_id per modality
         train_oid = _new_option(dest_key, "train",        expires_at)
         park_oid  = _new_option(dest_key, "parking",      expires_at)
         taxi_oid  = _new_option(dest_key, "taxi",         expires_at)
@@ -215,22 +205,9 @@ async def search_trips(payload: SearchPayload) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# /book — Commit phase
-# ---------------------------------------------------------------------------
-
-
-@router.post("/book")
-async def book_trip(payload: BookPayload) -> dict[str, Any]:
-    """
-    Atomically locks the single chosen modality resource and returns a
-    boarding pass generalised across all modality types.
-    Simulated 400 ms transaction delay.
-    """
-    await asyncio.sleep(0.4)
-
+def _run_book_logic(option_id: str) -> dict[str, Any]:
     with _lock:
-        option = _OPTIONS.get(payload.option_id)
+        option = _OPTIONS.get(option_id)
 
         if option is None:
             raise HTTPException(status_code=404, detail="option_id not found or expired")
@@ -242,7 +219,6 @@ async def book_trip(payload: BookPayload) -> dict[str, Any]:
         option["status"] = "BOOKED"
         modality = option["modality"]
 
-        # Decrement only the relevant resource
         updated_available_spots: int | None = None
         if modality == "train":
             _RESOURCES["train_seats"]["available"] = max(
@@ -257,23 +233,20 @@ async def book_trip(payload: BookPayload) -> dict[str, Any]:
             _RESOURCES["bike_stazione"]["available_bikes"] = max(
                 0, _RESOURCES["bike_stazione"]["available_bikes"] - 1
             )
-        # taxi: dispatched on demand, no pool to decrement
 
     dest       = _resolve_dest(option["dest_key"])
     booking_id = f"CS-{str(uuid.uuid4())[:8].upper()}"
     now_iso    = _iso(_now_utc())
 
-    # Build a modality-specific boarding pass using generic detail_lines
     if modality == "train":
         title    = _reg_number(booking_id)
-        subtitle = f"Binario {dest['platform']} · Posto {_seat(payload.option_id)}"
+        subtitle = f"Binario {dest['platform']} · Posto {_seat(option_id)}"
         detail_lines = [
             {"label": "Partenza",  "value": _offset_iso(dest["departs_in_min"])},
             {"label": "Linea",     "value": dest["track"]},
             {"label": "Origine",   "value": "Trento"},
             {"label": "Validità",  "value": "Solo andata"},
         ]
-
     elif modality == "parking":
         spot = _parking_spot(booking_id)
         title    = "Parcheggio Stazione"
@@ -284,7 +257,6 @@ async def book_trip(payload: BookPayload) -> dict[str, Any]:
             {"label": "Durata massima",   "value": "24 ore"},
             {"label": "Tariffa oraria",   "value": "€ 1,00 / ora"},
         ]
-
     elif modality == "taxi":
         title    = "Taxi CommuteSync"
         subtitle = "Tesla Model 3 · Marco R."
@@ -294,8 +266,7 @@ async def book_trip(payload: BookPayload) -> dict[str, Any]:
             {"label": "Targa",      "value": "TN 482 BX"},
             {"label": "ETA",        "value": "~4 minuti"},
         ]
-
-    else:  # bike_sharing
+    else:
         bike_id = f"BIKE-{abs(hash(booking_id)) % 900 + 100}"
         title    = "Bike Sharing"
         subtitle = f"Stazione FS · Bici {bike_id}"
@@ -308,7 +279,7 @@ async def book_trip(payload: BookPayload) -> dict[str, Any]:
 
     return {
         "booking_id":              booking_id,
-        "option_id":               payload.option_id,
+        "option_id":               option_id,
         "modality_type":           modality,
         "status":                  "BOOKED",
         "confirmed_at":            now_iso,
@@ -316,7 +287,7 @@ async def book_trip(payload: BookPayload) -> dict[str, Any]:
         "boarding_pass": {
             "booking_id":         booking_id,
             "passenger":          "Passeggero CommuteSync",
-            "qr_payload":         f"CS:{booking_id}:{payload.option_id[:8]}",
+            "qr_payload":         f"CS:{booking_id}:{option_id[:8]}",
             "modality_type":      modality,
             "title":              title,
             "subtitle":           subtitle,
@@ -327,3 +298,25 @@ async def book_trip(payload: BookPayload) -> dict[str, Any]:
             "destination_coords": dest["coords"],
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# /search — Discovery phase
+# ---------------------------------------------------------------------------
+
+
+@router.post("/search")
+async def search_trips(payload: SearchPayload) -> dict[str, Any]:
+    await asyncio.sleep(0.6)
+    return _run_search_logic(payload.destination)
+
+
+# ---------------------------------------------------------------------------
+# /book — Commit phase
+# ---------------------------------------------------------------------------
+
+
+@router.post("/book")
+async def book_trip(payload: BookPayload) -> dict[str, Any]:
+    await asyncio.sleep(0.4)
+    return _run_book_logic(payload.option_id)
