@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { View, StyleSheet } from 'react-native';
 import {
   MapContainer, TileLayer, Marker, CircleMarker, Circle,
-  Polygon, Polyline, Popup, Pane, ZoomControl, useMap,
+  Polygon, Polyline, Popup, Tooltip, Pane, ZoomControl, useMap,
 } from 'react-leaflet';
 import L from 'leaflet';
 import {
@@ -534,6 +534,70 @@ function ParkingZones({ features, onSelect, onNavigate }: {
             eventHandlers={{ click: () => onSelect(f, 'parking') }}>
             <Popup closeButton>
               <FeaturePopup feature={f} category="parking" onNavigate={onNavigate} />
+            </Popup>
+          </Polygon>
+        );
+      })}
+    </>
+  );
+}
+
+// Named public parking lots — precise blue footprints drawn on top of the
+// (green) parking-zone overlay. Distinct colour so they read as real lots.
+const PARKING_LOT_COLOR = '#2f6fed';
+
+function ParkingLots({ features }: { features: MobilityFeature[] }) {
+  return (
+    <>
+      {features.map((f, i) => {
+        const positions = (f.geometry.coordinates as number[][][])[0].map(
+          (c) => [c[1], c[0]] as [number, number]
+        );
+        const p = f.properties;
+        const name = String(p.name ?? 'Parcheggio');
+        return (
+          <Polygon key={i} positions={positions}
+            pathOptions={{
+              fillColor: PARKING_LOT_COLOR, fillOpacity: 0.35,
+              color: PARKING_LOT_COLOR, weight: 2, opacity: 0.95,
+            }}>
+            <Tooltip sticky direction="top" offset={[0, -4]}>
+              <span style={{ fontWeight: 700 }}>{name}</span>
+            </Tooltip>
+            <Popup closeButton>
+              <div style={{ padding: '14px 18px 12px', minWidth: 200 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 10, paddingRight: 18 }}>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: '50%',
+                    background: PARKING_LOT_COLOR + '22', border: `1.5px solid ${PARKING_LOT_COLOR}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0,
+                  }}>🅿️</div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', lineHeight: 1.2 }}>{name}</div>
+                    <div style={{ fontSize: 11, color: PARKING_LOT_COLOR, marginTop: 2, fontWeight: 600 }}>
+                      Parcheggio pubblico
+                    </div>
+                  </div>
+                </div>
+                {p.capacity != null && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Posti</span>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 500 }}>{String(p.capacity)}</span>
+                  </div>
+                )}
+                {p.kind != null && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Tipo</span>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 500 }}>{String(p.kind)}</span>
+                  </div>
+                )}
+                {p.fee != null && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>A pagamento</span>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 500 }}>{p.fee === 'yes' ? 'Sì' : 'No'}</span>
+                  </div>
+                )}
+              </div>
             </Popup>
           </Polygon>
         );
@@ -1572,6 +1636,9 @@ export default function MapView({
         )}
         {showMapIcons && visibleCategories.has('parking') && (
           <ParkingZones features={data.parking.features} onSelect={onFeatureSelect} onNavigate={onNavigate} />
+        )}
+        {visibleCategories.has('parking') && (
+          <ParkingLots features={data.parkingLots.features} />
         )}
         {/* Bus stops live in their own pane above the overlay-pane (z 400) so
             the translucent parking polygons can't intercept stop clicks. */}

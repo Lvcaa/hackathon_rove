@@ -47,6 +47,13 @@ const MOCK: MobilityData = {
       { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[11.113, 46.064], [11.119, 46.064], [11.119, 46.070], [11.113, 46.070], [11.113, 46.064]]] }, properties: { zona: 'verde', descrizione: 'ZTL verde', pianopark: 2 } },
     ],
   },
+  parkingLots: {
+    type: 'FeatureCollection',
+    features: [
+      { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[11.115462, 46.066405], [11.115304, 46.066389], [11.115273, 46.066533], [11.1149, 46.066496], [11.114835, 46.066551], [11.115413, 46.067663], [11.115462, 46.067759], [11.115848, 46.067661], [11.115462, 46.066405]]] }, properties: { name: 'P5 - Parcheggio Duomo', osm_id: 1453397784, kind: 'underground', fee: 'yes', capacity: 201 } },
+      { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[11.11296, 46.057518], [11.114422, 46.0576], [11.114479, 46.057184], [11.113025, 46.057012], [11.112982, 46.057344], [11.11296, 46.057518]]] }, properties: { name: 'P8 - Parcheggio Monte Baldo', osm_id: 24441737, kind: 'surface', fee: 'yes', capacity: 250 } },
+    ],
+  },
 };
 
 // Mock bus stops — a handful spread across Trento until real data loads
@@ -146,18 +153,19 @@ export function useMobilityData() {
       try {
         const ctrl = new AbortController();
         const timeout = setTimeout(() => ctrl.abort(), 5000);
-        const [sR, tR, cR, pR, stR] = await Promise.all([
+        const [sR, tR, cR, pR, plR, stR] = await Promise.all([
           fetch(`${API_BASE}/api/stations`, { signal: ctrl.signal }),
           fetch(`${API_BASE}/api/taxi`, { signal: ctrl.signal }),
           fetch(`${API_BASE}/api/carsharing`, { signal: ctrl.signal }),
           fetch(`${API_BASE}/api/parking`, { signal: ctrl.signal }),
+          fetch(`${API_BASE}/api/parkinglots`, { signal: ctrl.signal }),
           fetch(`${API_BASE}/api/stats`, { signal: ctrl.signal }),
         ]);
         clearTimeout(timeout);
-        const [stations, taxi, carsharing, parking, statsData] = await Promise.all([
-          sR.json(), tR.json(), cR.json(), pR.json(), stR.json(),
+        const [stations, taxi, carsharing, parking, parkingLots, statsData] = await Promise.all([
+          sR.json(), tR.json(), cR.json(), pR.json(), plR.json(), stR.json(),
         ]);
-        setData({ stations, taxi, carsharing, parking });
+        setData({ stations, taxi, carsharing, parking, parkingLots });
         setStats((prev) => ({ ...prev, ...statsData }));
         backendAvailable.current = true;
       } catch {

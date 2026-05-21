@@ -28,6 +28,7 @@ export interface MobilityData {
   taxi: MobilityCollection;
   carsharing: MobilityCollection;
   parking: MobilityCollection;
+  parkingLots: MobilityCollection;
 }
 
 export type BusKind = 'urban' | 'extraurban';
