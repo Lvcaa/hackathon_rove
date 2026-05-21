@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
 from app.routers import admin, mobility, transit
-from app.routers import destinations, parking, routing, sensors, sharing, trips
+from app.routers import ai, destinations, parking, routing, sensors, sharing, trips
 
 app = FastAPI(title="CommuteSync API", version="1.0.0")
 
@@ -26,6 +26,7 @@ app.include_router(transit.router)
 app.include_router(admin.router)
 
 # Booking system
+app.include_router(ai.router)
 app.include_router(trips.router)
 app.include_router(routing.router)
 app.include_router(destinations.router)

@@ -83,13 +83,24 @@ export function useBooking() {
 
       const data: TripBookResponse = await res.json();
 
-      setState((prev) => ({
-        ...prev,
-        phase:           'confirmed',
-        bookingOptionId: null,
-        confirmation:    data,
-        error:           null,
-      }));
+      setState((prev) => {
+        const modalities =
+          data.modality_type === 'parking' && data.updated_available_spots != null
+            ? prev.modalities.map((m) =>
+                m.type === 'parking'
+                  ? { ...m, available_spots: data.updated_available_spots! }
+                  : m
+              )
+            : prev.modalities;
+        return {
+          ...prev,
+          phase:           'confirmed',
+          bookingOptionId: null,
+          confirmation:    data,
+          modalities,
+          error:           null,
+        };
+      });
     } catch (err) {
       // Roll back to the selection list so the user can retry or pick another
       setState((prev) => ({
@@ -106,5 +117,14 @@ export function useBooking() {
     setState(INITIAL);
   }, []);
 
-  return { state, search, book, dismiss };
+  const setConfirmedFromAI = useCallback((data: TripBookResponse) => {
+    setState((prev) => ({
+      ...prev,
+      phase:        'confirmed',
+      confirmation: data,
+      error:        null,
+    }));
+  }, []);
+
+  return { state, search, book, dismiss, setConfirmedFromAI };
 }
