@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Tabs } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { AuthProvider } from '../hooks/useAuth';
 
 function injectGlobalStyles() {
   if (typeof document === 'undefined') return;
@@ -21,7 +22,7 @@ export default function RootLayout() {
   useEffect(() => { injectGlobalStyles(); }, []);
 
   return (
-    <>
+    <AuthProvider>
       <StatusBar style="light" />
       <Tabs
         screenOptions={{
@@ -37,7 +38,11 @@ export default function RootLayout() {
           name="dashboard"
           options={{ title: 'Dashboard', tabBarIcon: () => null }}
         />
+        <Tabs.Screen
+          name="profile"
+          options={{ title: 'Profile', tabBarIcon: () => null }}
+        />
       </Tabs>
-    </>
+    </AuthProvider>
   );
 }

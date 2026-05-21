@@ -11,6 +11,7 @@ import BottomSheet from '../components/BottomSheet';
 import LayerTogglePanel from '../components/LayerTogglePanel';
 import BookingSheet from '../components/BookingSheet';
 import RoutingPanel from '../components/RoutingPanel';
+import UserAvatarButton from '../components/UserAvatarButton';
 
 // Origin/destination point a routing request resolves to.
 interface RouteTarget { name: string; lat: number; lng: number; }
@@ -179,6 +180,7 @@ export default function MapScreen() {
           />
         )}
         <BookingSheet searchTrigger={bookingTrigger} suggestions={suggestions} />
+        <UserAvatarButton />
       </View>
     </View>
   );
