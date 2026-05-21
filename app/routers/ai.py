@@ -143,8 +143,8 @@ def _select_modality(modalities: list[dict[str, Any]], hint: str) -> dict[str, A
 def ai_plan(payload: AIPlanRequest) -> dict[str, Any]:
     intent = _parse_intent(payload.prompt)
 
-    destination   = intent.get("destination", "stazione fs rovereto")
-    modality_hint = intent.get("modality_hint", "any") or "any"
+    destination   = intent.get("destination") or "stazione fs rovereto"
+    modality_hint = intent.get("modality_hint") or "any"
 
     search_result = _run_search_logic(destination)
     chosen        = _select_modality(search_result["modalities"], modality_hint)
