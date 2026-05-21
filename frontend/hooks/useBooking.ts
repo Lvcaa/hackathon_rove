@@ -4,22 +4,30 @@ import { BookingState, TripSearchResponse, TripBookResponse } from '../types/boo
 const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 const INITIAL: BookingState = {
-  phase: 'idle',
-  option: null,
-  confirmation: null,
-  error: null,
+  phase:             'idle',
+  destination:       null,
+  destination_coords: null,
+  modalities:        [],
+  bookingOptionId:   null,
+  confirmation:      null,
+  error:             null,
 };
 
 export function useBooking() {
   const [state, setState] = useState<BookingState>(INITIAL);
   const abortRef = useRef<AbortController | null>(null);
 
+  // ── Discovery phase ─────────────────────────────────────────────────────────
+
   const search = useCallback(async (destination: string) => {
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
-    setState({ phase: 'searching', option: null, confirmation: null, error: null });
+    setState({
+      ...INITIAL,
+      phase: 'searching',
+    });
 
     try {
       const res = await fetch(`${API_BASE}/api/trips/search`, {
@@ -31,19 +39,35 @@ export function useBooking() {
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail ?? `Search failed (${res.status})`);
+        throw new Error(body.detail ?? `Ricerca fallita (${res.status})`);
       }
 
       const data: TripSearchResponse = await res.json();
-      setState({ phase: 'option', option: data, confirmation: null, error: null });
+
+      setState({
+        phase:              'selecting',
+        destination:        data.destination,
+        destination_coords: data.destination_coords,
+        modalities:         data.modalities,
+        bookingOptionId:    null,
+        confirmation:       null,
+        error:              null,
+      });
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
-      setState({ phase: 'idle', option: null, confirmation: null, error: String(err) });
+      setState({ ...INITIAL, error: String(err) });
     }
   }, []);
 
+  // ── Commit phase ────────────────────────────────────────────────────────────
+
   const book = useCallback(async (option_id: string) => {
-    setState((prev) => ({ ...prev, phase: 'booking', error: null }));
+    setState((prev) => ({
+      ...prev,
+      phase:           'booking',
+      bookingOptionId: option_id,
+      error:           null,
+    }));
 
     try {
       const res = await fetch(`${API_BASE}/api/trips/book`, {
@@ -54,14 +78,26 @@ export function useBooking() {
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail ?? `Booking failed (${res.status})`);
+        throw new Error(body.detail ?? `Prenotazione fallita (${res.status})`);
       }
 
       const data: TripBookResponse = await res.json();
-      setState((prev) => ({ ...prev, phase: 'confirmed', confirmation: data, error: null }));
+
+      setState((prev) => ({
+        ...prev,
+        phase:           'confirmed',
+        bookingOptionId: null,
+        confirmation:    data,
+        error:           null,
+      }));
     } catch (err) {
-      // Roll back to option view so the user can retry
-      setState((prev) => ({ ...prev, phase: 'option', error: String(err) }));
+      // Roll back to the selection list so the user can retry or pick another
+      setState((prev) => ({
+        ...prev,
+        phase:           'selecting',
+        bookingOptionId: null,
+        error:           String(err),
+      }));
     }
   }, []);
 

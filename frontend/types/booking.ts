@@ -8,9 +8,19 @@ export interface TripBookPayload {
   option_id: string;
 }
 
-// ── Search response ───────────────────────────────────────────────────────────
+// ── Modality types (discriminated union) ─────────────────────────────────────
 
-export interface TrainInfo {
+export type ModalityType = 'train' | 'parking' | 'taxi' | 'bike_sharing';
+
+interface BaseModality {
+  option_id: string;
+  type: ModalityType;
+  price_eur: number;
+  expires_at: string;
+}
+
+export interface TrainModality extends BaseModality {
+  type: 'train';
   departure_time: string;
   track: string;
   platform: number;
@@ -18,46 +28,63 @@ export interface TrainInfo {
   total_seats: number;
 }
 
-export interface ParkingInfo {
+export interface ParkingModality extends BaseModality {
+  type: 'parking';
   zone: string;
   description: string;
-  free_spots: number;
+  available_spots: number;
   total_spots: number;
   distance_meters: number;
 }
 
-export interface BikeSharingInfo {
+export interface TaxiModality extends BaseModality {
+  type: 'taxi';
+  eta_minutes: number;
+  vehicle_model: string;
+  driver_name: string;
+  plate: string;
+}
+
+export interface BikeSharingModality extends BaseModality {
+  type: 'bike_sharing';
   station_name: string;
   available_bikes: number;
   available_docks: number;
   distance_meters: number;
 }
 
+export type ModalityOption =
+  | TrainModality
+  | ParkingModality
+  | TaxiModality
+  | BikeSharingModality;
+
+// ── Search response ───────────────────────────────────────────────────────────
+
 export interface TripSearchResponse {
-  option_id: string;
   destination: string;
   destination_coords: [number, number];
-  expires_at: string;
-  train: TrainInfo;
-  parking: ParkingInfo;
-  bike_sharing: BikeSharingInfo;
-  price_eur: number;
   route_waypoints: [number, number][];
+  modalities: ModalityOption[];
 }
 
-// ── Book response ─────────────────────────────────────────────────────────────
+// ── Book response — generalised across all modality types ─────────────────────
+
+export interface DetailLine {
+  label: string;
+  value: string;
+}
 
 export interface BoardingPass {
   booking_id: string;
   passenger: string;
   qr_payload: string;
-  train_code: string;
+  modality_type: ModalityType;
+  title: string;
+  subtitle: string;
   origin: string;
   destination: string;
-  departure_time: string;
-  platform: number;
-  seat: string;
-  validity: string;
+  detail_lines: DetailLine[];
   route_waypoints: [number, number][];
   destination_coords: [number, number];
 }
@@ -65,6 +92,7 @@ export interface BoardingPass {
 export interface TripBookResponse {
   booking_id: string;
   option_id: string;
+  modality_type: ModalityType;
   status: 'BOOKED';
   confirmed_at: string;
   boarding_pass: BoardingPass;
@@ -72,11 +100,20 @@ export interface TripBookResponse {
 
 // ── Booking state machine ─────────────────────────────────────────────────────
 
-export type BookingPhase = 'idle' | 'searching' | 'option' | 'booking' | 'confirmed';
+// idle → searching → selecting → booking → confirmed
+export type BookingPhase =
+  | 'idle'
+  | 'searching'
+  | 'selecting'
+  | 'booking'
+  | 'confirmed';
 
 export interface BookingState {
   phase: BookingPhase;
-  option: TripSearchResponse | null;
+  destination: string | null;
+  destination_coords: [number, number] | null;
+  modalities: ModalityOption[];
+  bookingOptionId: string | null;  // which option_id is currently being committed
   confirmation: TripBookResponse | null;
   error: string | null;
 }
