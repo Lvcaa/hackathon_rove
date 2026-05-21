@@ -12,6 +12,7 @@ interface Props {
   visibleCategories: Set<CategoryKey>;
   selectedFeature: MobilityFeature | null;
   onFeatureSelect: (feature: MobilityFeature, category: CategoryKey) => void;
+  onNavigate?: (feature: MobilityFeature, category: CategoryKey) => void;
 }
 
 export default function MapView({ data, visibleCategories }: Props) {

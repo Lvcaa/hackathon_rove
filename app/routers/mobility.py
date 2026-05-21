@@ -16,6 +16,7 @@ from pyproj import Transformer
 from shapely import wkt as shapely_wkt
 
 from ..tt_realtime import get_live_buses as _tt_live_buses
+from ..tt_realtime import get_trip_route as _tt_trip_route
 from ..tt_realtime import start as _tt_start
 
 # ---------------------------------------------------------------------------
@@ -255,3 +256,9 @@ def get_live_buses() -> dict:
     interpolated along each trip's stop sequence — see `app/tt_realtime.py`.
     """
     return _tt_live_buses()
+
+
+@router.get("/api/buses/{trip_id}/route")
+def get_bus_route(trip_id: str) -> dict:
+    """GeoJSON LineString of a single trip's full route, for the map preview."""
+    return _tt_trip_route(trip_id)

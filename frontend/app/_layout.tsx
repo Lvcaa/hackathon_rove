@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { Tabs } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Colors } from '../constants/colors';
 
 function injectGlobalStyles() {
   if (typeof document === 'undefined') return;
@@ -27,15 +26,7 @@ export default function RootLayout() {
       <Tabs
         screenOptions={{
           headerShown: false,
-          tabBarStyle: {
-            backgroundColor: Colors.surface,
-            borderTopColor: Colors.border,
-            borderTopWidth: 1,
-            height: 52,
-          },
-          tabBarActiveTintColor: Colors.cyan,
-          tabBarInactiveTintColor: Colors.textMuted,
-          tabBarLabelStyle: { fontSize: 12, fontWeight: '600' },
+          tabBarStyle: { display: 'none' },
         }}
       >
         <Tabs.Screen

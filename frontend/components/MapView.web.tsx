@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { View, StyleSheet } from 'react-native';
 import {
   MapContainer, TileLayer, Marker, CircleMarker,
-  Polygon, Popup, Pane, ZoomControl, useMap,
+  Polygon, Polyline, Popup, Pane, ZoomControl, useMap,
 } from 'react-leaflet';
 import L from 'leaflet';
 import {
@@ -87,22 +87,32 @@ function injectStyles() {
     .leaflet-control-zoom a:hover { background:rgba(30,30,30,0.95) !important; color:#fff !important; }
     .leaflet-bar { border:1px solid rgba(255,255,255,0.1) !important; border-radius:10px !important; overflow:hidden; box-shadow:0 4px 16px rgba(0,0,0,0.6) !important; }
 
-    /* Live bus glow pulse — green for urban, blue for extraurban */
-    @keyframes bus-glow-urban {
-      0%   { filter: drop-shadow(0 0 5px rgba(118,184,42,0.55)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
-      50%  { filter: drop-shadow(0 0 14px rgba(118,184,42,1.0)) drop-shadow(0 0 24px rgba(118,184,42,0.4)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
-      100% { filter: drop-shadow(0 0 5px rgba(118,184,42,0.55)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
+    /* Live bus pulse. The glow is a separate radial-gradient layer animated
+       only with transform+opacity (compositor-only) — far cheaper per frame
+       than animating a drop-shadow filter on hundreds of markers. */
+    @keyframes cs-glow-pulse {
+      0%, 100% { transform: scale(0.62); opacity: 0.42; }
+      50%      { transform: scale(1.22); opacity: 0.85; }
     }
-    @keyframes bus-glow-extra {
-      0%   { filter: drop-shadow(0 0 5px rgba(28,134,207,0.55)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
-      50%  { filter: drop-shadow(0 0 14px rgba(28,134,207,1.0)) drop-shadow(0 0 24px rgba(28,134,207,0.4)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
-      100% { filter: drop-shadow(0 0 5px rgba(28,134,207,0.55)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
+    .cs-bus-wrap { position:relative; width:26px; height:40px; }
+    .cs-bus-wrap.ghost { opacity:0.42; }
+    .cs-bus-rot { line-height:0; transform-origin:13px 20px;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.55)); }
+    .cs-bus-glow {
+      position:absolute; left:13px; top:20px; width:42px; height:42px;
+      margin:-21px 0 0 -21px; border-radius:50%; pointer-events:none;
+      will-change:transform,opacity;
+      animation: cs-glow-pulse 2.4s ease-in-out infinite;
     }
-    .bus-vehicle-inner { display:inline-block; }
-    .bus-vehicle-inner.urban { animation: bus-glow-urban 2.4s ease-in-out infinite; }
-    .bus-vehicle-inner.extra { animation: bus-glow-extra 2.4s ease-in-out infinite; }
-    /* Schedule estimate (no live GPS): dimmed, no glow. */
-    .bus-vehicle-inner.ghost { opacity:0.42; filter: drop-shadow(0 1px 3px rgba(0,0,0,0.55)); }
+    .cs-bus-glow.urban { background:radial-gradient(closest-side, rgba(118,184,42,0.9), rgba(118,184,42,0)); }
+    .cs-bus-glow.extra { background:radial-gradient(closest-side, rgba(28,134,207,0.9), rgba(28,134,207,0)); }
+
+    /* Neon route preview line shown when a bus is tapped. */
+    .cs-route-line { stroke-linecap:round; stroke-linejoin:round; }
+    .cs-route-urban { filter: drop-shadow(0 0 4px #76b82a) drop-shadow(0 0 9px #76b82a); }
+    .cs-route-extra { filter: drop-shadow(0 0 4px #1c86cf) drop-shadow(0 0 9px #1c86cf); }
+    @keyframes cs-route-dash { to { stroke-dashoffset:-28; } }
+    .cs-route-line { animation: cs-route-dash 1.1s linear infinite; }
 
     /* Glide the marker between polled positions (matches BUS_REFRESH_MS).
        Suppressed during zoom so buses don't lag behind the map. */
@@ -161,15 +171,17 @@ function busSvg(route: string, body: string) {
 }
 
 function createBusVehicleIcon(route: string, bearing: number, kind: BusKind, live: boolean) {
-  // Live buses glow (green/blue); schedule estimates use the dimmed, no-glow
-  // `ghost` style so they read as "where the bus should be", not a real fix.
-  const stateClass = live ? (kind === 'extraurban' ? 'extra' : 'urban') : 'ghost';
+  // Live buses get a pulsing glow layer (green/blue); schedule estimates use
+  // the dimmed, no-glow `ghost` style so they read as "where the bus should
+  // be", not a real fix.
+  const glow = live
+    ? `<div class="cs-bus-glow ${kind === 'extraurban' ? 'extra' : 'urban'}"></div>`
+    : '';
   return L.divIcon({
     className: 'cs-bus-marker',
-    // Outer div carries the glow-pulse animation; inner div carries the rotation.
-    // Separating them prevents the animation from interfering with position glide.
-    html: `<div class="bus-vehicle-inner ${stateClass}">
-      <div style="transform:rotate(${bearing}deg);transform-origin:13px 20px;line-height:0;">
+    html: `<div class="cs-bus-wrap${live ? '' : ' ghost'}">
+      ${glow}
+      <div class="cs-bus-rot" style="transform:rotate(${bearing}deg);">
         ${busSvg(route, busColor(kind))}
       </div>
     </div>`,
@@ -534,6 +546,7 @@ function BusStopMarker({ feature }: { feature: MobilityFeature }) {
 const STOP_INDIVIDUAL_ZOOM = 15;  // at/above this zoom every visible stop is shown
 const CLUSTER_CELL_PX = 70;       // grid cell size (screen px) used to group stops
 const VIEWPORT_PAD = 0.3;         // render this far beyond the viewport for smooth pans
+const MAX_BUSES = 280;            // hard cap on rendered bus markers (perf ceiling)
 
 // Re-renders its consumer whenever the map finishes moving or zooming.
 function useMapViewport() {
@@ -633,23 +646,80 @@ function BusStopsLayer({ features, kind }: { features: MobilityFeature[]; kind: 
   );
 }
 
+interface RouteLine { coords: [number, number][]; kind: BusKind; }
+
 function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
   // react-leaflet calls setIcon (recreating the DOM node) whenever the `icon`
   // prop changes by reference — which would kill the CSS glide transition.
   // Cache icons by bus + bearing bucket so the marker element persists across
   // polls and `.cs-bus-marker { transition: transform }` can animate position.
   const iconCache = useRef<Map<string, L.DivIcon>>(new Map());
+  const map = useMap();
   const { bounds } = useMapViewport();
+  const [routeLine, setRouteLine] = useState<RouteLine | null>(null);
+  const routeReq = useRef(0);
 
-  // Cull off-screen buses — the live + scheduled fleet is several hundred
-  // markers, but only those in view need to be in the DOM.
+  // Cull off-screen buses, then hard-cap the rest: when zoomed out the whole
+  // fleet is in view, so keep the live buses and the ones nearest the centre.
   const visible = useMemo(() => {
     const padded = bounds.pad(VIEWPORT_PAD);
-    return vehicles.filter((b) => padded.contains([b.lat, b.lon]));
+    const inView = vehicles.filter((b) => padded.contains([b.lat, b.lon]));
+    if (inView.length <= MAX_BUSES) return inView;
+    const c = bounds.getCenter();
+    return inView
+      .map((b) => ({ b, d: (b.lat - c.lat) ** 2 + (b.lon - c.lng) ** 2 }))
+      .sort((x, y) => (Number(y.b.live) - Number(x.b.live)) || (x.d - y.d))
+      .slice(0, MAX_BUSES)
+      .map((e) => e.b);
   }, [vehicles, bounds]);
+
+  // Tapping the map background dismisses the route preview (marker clicks
+  // don't bubble to the map, so switching buses never triggers this).
+  useEffect(() => {
+    const clear = () => { routeReq.current++; setRouteLine(null); };
+    map.on('click', clear);
+    return () => { map.off('click', clear); };
+  }, [map]);
+
+  const showRoute = useCallback((bus: BusVehicle) => {
+    const tripId = bus.id.replace(/^trip-/, '');
+    const id = ++routeReq.current;
+    fetch(`${API_BASE}/api/buses/${encodeURIComponent(tripId)}/route`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('http'))))
+      .then((d: { geometry?: { coordinates?: number[][] } }) => {
+        if (id !== routeReq.current) return;
+        const coords = (d.geometry?.coordinates ?? []).map(
+          (c) => [c[1], c[0]] as [number, number],
+        );
+        setRouteLine(coords.length >= 2 ? { coords, kind: bus.kind } : null);
+      })
+      .catch(() => { if (id === routeReq.current) setRouteLine(null); });
+  }, []);
 
   return (
     <>
+      {routeLine && (
+        <Pane name="cs-route" style={{ zIndex: 535 }}>
+          <Polyline
+            positions={routeLine.coords}
+            pane="cs-route"
+            interactive={false}
+            pathOptions={{ color: busColor(routeLine.kind), weight: 9, opacity: 0.18 }}
+          />
+          <Polyline
+            positions={routeLine.coords}
+            pane="cs-route"
+            interactive={false}
+            pathOptions={{
+              color: busColor(routeLine.kind),
+              weight: 3.5,
+              opacity: 0.95,
+              dashArray: '14 14',
+              className: `cs-route-line ${routeLine.kind === 'extraurban' ? 'cs-route-extra' : 'cs-route-urban'}`,
+            }}
+          />
+        </Pane>
+      )}
       {visible.map((bus) => {
         const bucket = Math.round(bus.bearing / 15) * 15;
         const cacheKey = `${bus.id}:${bus.route}:${bus.kind}:${bus.live}:${bucket}`;
@@ -659,7 +729,12 @@ function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
           iconCache.current.set(cacheKey, icon);
         }
         return (
-          <Marker key={bus.id} position={[bus.lat, bus.lon]} icon={icon}>
+          <Marker
+            key={bus.id}
+            position={[bus.lat, bus.lon]}
+            icon={icon}
+            eventHandlers={{ click: () => showRoute(bus) }}
+          >
             <Popup closeButton>
               <BusVehiclePopup bus={bus} />
             </Popup>

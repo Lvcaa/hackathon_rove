@@ -12,9 +12,10 @@ function injectStyles() {
   const s = document.createElement('style');
   s.id = 'cs-booking-styles';
   s.textContent = `
-    @keyframes cs-slide-up {
-      from { transform: translateY(110%); opacity: 0; }
-      to   { transform: translateY(0);    opacity: 1; }
+    /* Pane grows out of the search bar's spot rather than sliding off-screen. */
+    @keyframes cs-pane-in {
+      from { opacity: 0; transform: translateY(10px) scale(0.95); }
+      to   { opacity: 1; transform: translateY(0)    scale(1); }
     }
     @keyframes cs-fade-in {
       from { opacity: 0; transform: translateY(8px); }
@@ -30,7 +31,10 @@ function injectStyles() {
       50%       { border-color: rgba(0,229,255,0.55); }
     }
 
-    .cs-slide-up { animation: cs-slide-up 0.38s cubic-bezier(0.16,1,0.3,1) both; }
+    .cs-pane-in {
+      animation: cs-pane-in 0.36s cubic-bezier(0.16,1,0.3,1) both;
+      transform-origin: bottom center;
+    }
     .cs-fade-in  { animation: cs-fade-in  0.22s ease both; }
     .cs-spinner  { animation: cs-spin 0.7s linear infinite; }
 
@@ -71,13 +75,70 @@ function injectStyles() {
     .cs-btn-ghost:hover { background: rgba(255,255,255,0.1) !important; }
 
     .cs-search-input:focus { outline: none; }
-    .cs-suggestion:hover { background: rgba(255,255,255,0.05) !important; }
     .cs-icon-btn:hover { background: rgba(255,255,255,0.1) !important; }
 
     .cs-cap-bar { transition: width 0.7s cubic-bezier(0.16,1,0.3,1); }
+
+    /* ── Destination search bar ───────────────────────────────────────── */
+    .cs-searchbar {
+      transition: transform 0.22s cubic-bezier(0.16,1,0.3,1),
+                  box-shadow 0.22s ease, border-color 0.22s ease;
+    }
+    .cs-searchbar:hover {
+      transform: translateY(-2px);
+      border-color: rgba(255,255,255,0.17) !important;
+      box-shadow: 0 26px 70px rgba(0,0,0,0.75),
+                  inset 0 1px 0 rgba(255,255,255,0.10) !important;
+    }
+    .cs-searchbar:focus-within {
+      border-color: rgba(0,229,255,0.45) !important;
+      box-shadow: 0 26px 70px rgba(0,0,0,0.75),
+                  0 0 0 3px rgba(0,229,255,0.13),
+                  inset 0 1px 0 rgba(255,255,255,0.10) !important;
+    }
+    /* Icon badge brightens while the field is focused */
+    .cs-search-badge {
+      transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+    }
+    .cs-searchbar:focus-within .cs-search-badge {
+      background: rgba(0,229,255,0.26) !important;
+      border-color: rgba(0,229,255,0.6) !important;
+      transform: scale(1.06);
+    }
+    .cs-search-input::placeholder { color: rgba(255,255,255,0.38); font-weight: 400; }
+    /* Submit button: lift on hover, press on click */
+    .cs-search-btn {
+      transition: transform 0.12s ease, box-shadow 0.16s ease, filter 0.16s ease;
+    }
+    .cs-search-btn:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.08);
+      box-shadow: 0 6px 22px rgba(0,229,255,0.42);
+    }
+    .cs-search-btn:active { transform: translateY(0) scale(0.96); }
+    /* Suggestion rows: cyan wash + nudge on hover */
+    .cs-suggestion {
+      transition: background 0.13s ease, padding-left 0.13s ease;
+    }
+    .cs-suggestion:hover {
+      background: rgba(0,229,255,0.07) !important;
+      padding-left: 20px !important;
+    }
   `;
   document.head.appendChild(s);
+
+  // Inter — crisp geometric UI typeface for the search bar.
+  if (!document.getElementById('cs-inter-font')) {
+    const f = document.createElement('link');
+    f.id = 'cs-inter-font';
+    f.rel = 'stylesheet';
+    f.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap';
+    document.head.appendChild(f);
+  }
 }
+
+// Inter stack for the destination search bar.
+const FONT = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 
@@ -644,22 +705,30 @@ function SearchBar({ onSearch }: { onSearch: (dest: string) => void }) {
     onSearch(dest);
   }, [onSearch]);
 
+  const suggestions = SUGGESTIONS.filter(
+    (s) => !query || s.toLowerCase().includes(query.toLowerCase()),
+  );
+  const showList = open && suggestions.length > 0;
+
   return (
-    <div className="cs-fade-in" style={{
-      position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
-      width: 'min(440px, calc(100vw - 48px))', zIndex: 1000,
-    }}>
-      <div style={{
-        background: C.surface,
-        borderRadius: open ? '18px 18px 14px 14px' : 20,
-        border: `1px solid ${C.border}`,
-        boxShadow: '0 20px 60px rgba(0,0,0,0.7)',
-        overflow: 'hidden',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px' }}>
-          <div style={{
-            width: 34, height: 34, borderRadius: 11, flexShrink: 0,
-            background: C.cyan + '18', border: `1px solid ${C.cyan}30`,
+    <div className="cs-fade-in" style={{ width: '100%' }}>
+      <div
+        className="cs-searchbar"
+        style={{
+          // Frosted glass — matches the map popups and the stat panels
+          background: 'rgba(17,19,27,0.72)',
+          backdropFilter: 'blur(28px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(28px) saturate(180%)',
+          borderRadius: showList ? '22px 22px 16px 16px' : 22,
+          border: '1px solid rgba(255,255,255,0.12)',
+          boxShadow: '0 22px 60px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.08)',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '11px 14px' }}>
+          <div className="cs-search-badge" style={{
+            width: 36, height: 36, borderRadius: 12, flexShrink: 0,
+            background: C.cyan + '18', border: `1px solid ${C.cyan}33`,
             display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.cyan,
           }}>
             <Ico.Search />
@@ -668,7 +737,8 @@ function SearchBar({ onSearch }: { onSearch: (dest: string) => void }) {
             className="cs-search-input"
             style={{
               flex: 1, background: 'transparent', border: 'none',
-              color: C.text, fontSize: 15, fontWeight: 500, fontFamily: 'inherit',
+              color: C.text, fontSize: 15, fontWeight: 500,
+              fontFamily: FONT, letterSpacing: '-0.01em',
             }}
             placeholder="Dove vuoi andare?"
             value={query}
@@ -678,33 +748,35 @@ function SearchBar({ onSearch }: { onSearch: (dest: string) => void }) {
             onKeyDown={(e) => e.key === 'Enter' && submit(query)}
           />
           <button
+            className="cs-search-btn"
             onClick={() => submit(query)}
             style={{
-              padding: '7px 14px', background: C.cyan, color: '#000',
-              border: 'none', borderRadius: 10, fontSize: 12, fontWeight: 800,
-              cursor: 'pointer', fontFamily: 'inherit', letterSpacing: '0.02em', flexShrink: 0,
+              padding: '8px 15px', background: C.cyan, color: '#000',
+              border: 'none', borderRadius: 11, fontSize: 12, fontWeight: 700,
+              cursor: 'pointer', fontFamily: FONT, letterSpacing: '0.01em', flexShrink: 0,
             }}
           >
             Cerca →
           </button>
         </div>
 
-        {open && (
-          <div style={{ borderTop: `1px solid ${C.border}`, paddingBottom: 6 }}>
-            {SUGGESTIONS.filter((s) => !query || s.toLowerCase().includes(query.toLowerCase())).map((s) => (
+        {showList && (
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingBottom: 6 }}>
+            {suggestions.map((s) => (
               <button
                 key={s}
                 className="cs-suggestion"
                 onMouseDown={() => submit(s)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10,
-                  width: '100%', padding: '10px 14px',
+                  width: '100%', padding: '11px 14px',
                   background: 'transparent', border: 'none',
                   color: C.text, fontSize: 13, fontWeight: 500,
-                  fontFamily: 'inherit', cursor: 'pointer', textAlign: 'left',
+                  fontFamily: FONT, letterSpacing: '-0.01em',
+                  cursor: 'pointer', textAlign: 'left',
                 }}
               >
-                <span style={{ color: C.muted }}><Ico.MapPin /></span>
+                <span style={{ color: C.muted, display: 'flex' }}><Ico.MapPin /></span>
                 {s}
               </button>
             ))}
@@ -718,10 +790,10 @@ function SearchBar({ onSearch }: { onSearch: (dest: string) => void }) {
 // ── Sheet panel ───────────────────────────────────────────────────────────────
 
 const SHEET_HEIGHT: Record<string, string> = {
-  searching: '180px',
-  selecting: 'min(82vh, 680px)',
-  booking:   'min(82vh, 680px)',
-  confirmed: 'min(75vh, 600px)',
+  searching: '176px',
+  selecting: 'min(72vh, 620px)',
+  booking:   'min(72vh, 620px)',
+  confirmed: 'min(66vh, 540px)',
 };
 
 function SheetPanel({
@@ -738,6 +810,8 @@ function SheetPanel({
   const { phase, modalities, bookingOptionId, confirmation, error } = state;
   const height    = SHEET_HEIGHT[phase] ?? '0';
   const confirmed = phase === 'confirmed';
+  const searching = phase === 'searching';
+  const accent    = confirmed ? C.green : C.cyan;
 
   const destLabel =
     state.destination ??
@@ -745,71 +819,83 @@ function SheetPanel({
     query;
 
   return (
-    <div style={{
-      position: 'fixed', bottom: 0, left: 0, right: 0,
-      zIndex: 1000,
-      display: 'flex', justifyContent: 'center',
-      pointerEvents: 'none',
-    }}>
+    // Full width of the shared container, so it lines up with the search bar.
+    <div style={{ width: '100%' }}>
       <div
-        className="cs-slide-up"
+        className="cs-pane-in"
         style={{
-          width: 'min(520px, 100%)',
-          background: C.surface,
-          borderTopLeftRadius: 24, borderTopRightRadius: 24,
-          borderTop: `1px solid ${C.border}`,
-          borderLeft: `1px solid ${C.border}`,
-          borderRight: `1px solid ${C.border}`,
-          boxShadow: '0 -20px 60px rgba(0,0,0,0.75)',
+          fontFamily: FONT,
+          // Frosted glass — grows upward out of the search bar below it.
+          background: 'rgba(17,19,27,0.82)',
+          backdropFilter: 'blur(30px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+          border: '1px solid rgba(255,255,255,0.12)',
+          borderRadius: 24,
+          boxShadow: '0 28px 80px rgba(0,0,0,0.78), inset 0 1px 0 rgba(255,255,255,0.08)',
           height,
+          maxHeight: 'calc(100vh - 120px)',
           display: 'flex', flexDirection: 'column',
-          pointerEvents: 'all',
-          transition: 'height 0.35s cubic-bezier(0.16,1,0.3,1)',
           overflow: 'hidden',
+          transition: 'height 0.4s cubic-bezier(0.16,1,0.3,1)',
         }}
       >
-        {/* Handle + header */}
-        <div style={{ flexShrink: 0, padding: '12px 18px 14px', borderBottom: `1px solid ${C.border}` }}>
-          <div style={{ width: 36, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.15)', margin: '0 auto 12px' }} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <button
-              className="cs-icon-btn"
-              onClick={onDismiss}
-              style={{
-                width: 32, height: 32, borderRadius: 10, flexShrink: 0,
-                background: 'rgba(255,255,255,0.06)', border: `1px solid ${C.border}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                cursor: 'pointer', color: C.muted,
-              }}
-            >
-              <Ico.X />
-            </button>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-                {confirmed ? 'Prenotazione confermata' : phase === 'searching' ? 'Ricerca in corso' : 'Destinazione'}
-              </div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {phase === 'searching' ? 'Ricerca opzioni…' : destLabel}
-              </div>
-            </div>
-            {confirmed && (
-              <div style={{
-                width: 34, height: 34, borderRadius: 10, flexShrink: 0,
-                background: C.green + '20', border: `1px solid ${C.green}44`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.green,
-              }}>
-                <Ico.Check />
-              </div>
-            )}
+        {/* Header */}
+        <div style={{
+          flexShrink: 0, display: 'flex', alignItems: 'center', gap: 11,
+          padding: '12px 13px',
+          borderBottom: '1px solid rgba(255,255,255,0.07)',
+        }}>
+          {/* Status badge: spinner while searching, check when confirmed, pin otherwise */}
+          <div style={{
+            width: 36, height: 36, borderRadius: 12, flexShrink: 0,
+            background: accent + '18', border: `1px solid ${accent}33`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', color: accent,
+          }}>
+            {confirmed ? <Ico.Check /> : searching ? <Spinner size={16} /> : <Ico.MapPin />}
           </div>
+
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 9.5, fontWeight: 700, color: accent === C.cyan ? C.muted : accent,
+              textTransform: 'uppercase', letterSpacing: '0.11em',
+            }}>
+              {confirmed ? 'Prenotazione confermata' : searching ? 'Ricerca in corso' : 'Destinazione'}
+            </div>
+            <div style={{
+              fontSize: 15, fontWeight: 700, color: C.text, letterSpacing: '-0.01em',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1,
+            }}>
+              {searching ? 'Ricerca opzioni…' : destLabel}
+            </div>
+          </div>
+
+          {/* Close — conventional top-right placement */}
+          <button
+            className="cs-icon-btn"
+            onClick={onDismiss}
+            aria-label="Chiudi"
+            style={{
+              width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+              background: 'rgba(255,255,255,0.06)', border: `1px solid ${C.border}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', color: C.muted, fontFamily: FONT,
+            }}
+          >
+            <Ico.X />
+          </button>
         </div>
 
         {/* Scrollable content */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 18px 28px' }}>
-          {phase === 'searching' && (
-            <div className="cs-fade-in" style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-              <Spinner size={28} />
-              <span style={{ fontSize: 14, color: C.muted, fontWeight: 500 }}>Ricerca opzioni disponibili…</span>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '15px 14px 16px' }}>
+          {searching && (
+            <div className="cs-fade-in" style={{
+              height: '100%', display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center', gap: 12,
+            }}>
+              <Spinner size={26} />
+              <span style={{ fontSize: 13, color: C.muted, fontWeight: 500 }}>
+                Ricerca opzioni disponibili…
+              </span>
             </div>
           )}
 
@@ -866,16 +952,24 @@ export default function BookingSheet({ onRouteReady, searchTrigger }: Props) {
     search(dest);
   }, [search]);
 
-  if (state.phase === 'idle') {
-    return <SearchBar onSearch={handleSearch} />;
-  }
-
+  // The pane and the search bar live in one bottom-anchored, centred column,
+  // so they always share the same width and centre line — and the search bar
+  // stays visible while the pane is open.
   return (
-    <SheetPanel
-      state={state}
-      query={query}
-      onBook={book}
-      onDismiss={dismiss}
-    />
+    <div style={{
+      position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+      width: 'min(440px, calc(100vw - 48px))', zIndex: 1000,
+      display: 'flex', flexDirection: 'column', gap: 10,
+    }}>
+      {state.phase !== 'idle' && (
+        <SheetPanel
+          state={state}
+          query={query}
+          onBook={book}
+          onDismiss={dismiss}
+        />
+      )}
+      <SearchBar onSearch={handleSearch} />
+    </div>
   );
 }
