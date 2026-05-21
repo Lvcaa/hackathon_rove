@@ -83,13 +83,24 @@ export function useBooking() {
 
       const data: TripBookResponse = await res.json();
 
-      setState((prev) => ({
-        ...prev,
-        phase:           'confirmed',
-        bookingOptionId: null,
-        confirmation:    data,
-        error:           null,
-      }));
+      setState((prev) => {
+        const modalities =
+          data.modality_type === 'parking' && data.updated_available_spots != null
+            ? prev.modalities.map((m) =>
+                m.type === 'parking'
+                  ? { ...m, available_spots: data.updated_available_spots! }
+                  : m
+              )
+            : prev.modalities;
+        return {
+          ...prev,
+          phase:           'confirmed',
+          bookingOptionId: null,
+          confirmation:    data,
+          modalities,
+          error:           null,
+        };
+      });
     } catch (err) {
       // Roll back to the selection list so the user can retry or pick another
       setState((prev) => ({

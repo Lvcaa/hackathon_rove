@@ -243,6 +243,7 @@ async def book_trip(payload: BookPayload) -> dict[str, Any]:
         modality = option["modality"]
 
         # Decrement only the relevant resource
+        updated_available_spots: int | None = None
         if modality == "train":
             _RESOURCES["train_seats"]["available"] = max(
                 0, _RESOURCES["train_seats"]["available"] - 1
@@ -251,6 +252,7 @@ async def book_trip(payload: BookPayload) -> dict[str, Any]:
             _RESOURCES["parking_stazione"]["available"] = max(
                 0, _RESOURCES["parking_stazione"]["available"] - 1
             )
+            updated_available_spots = _RESOURCES["parking_stazione"]["available"]
         elif modality == "bike_sharing":
             _RESOURCES["bike_stazione"]["available_bikes"] = max(
                 0, _RESOURCES["bike_stazione"]["available_bikes"] - 1
@@ -305,11 +307,12 @@ async def book_trip(payload: BookPayload) -> dict[str, Any]:
         ]
 
     return {
-        "booking_id":    booking_id,
-        "option_id":     payload.option_id,
-        "modality_type": modality,
-        "status":        "BOOKED",
-        "confirmed_at":  now_iso,
+        "booking_id":              booking_id,
+        "option_id":               payload.option_id,
+        "modality_type":           modality,
+        "status":                  "BOOKED",
+        "confirmed_at":            now_iso,
+        "updated_available_spots": updated_available_spots,
         "boarding_pass": {
             "booking_id":         booking_id,
             "passenger":          "Passeggero CommuteSync",

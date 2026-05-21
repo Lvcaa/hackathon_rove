@@ -95,6 +95,7 @@ export interface TripBookResponse {
   modality_type: ModalityType;
   status: 'BOOKED';
   confirmed_at: string;
+  updated_available_spots?: number;
   boarding_pass: BoardingPass;
 }
 
