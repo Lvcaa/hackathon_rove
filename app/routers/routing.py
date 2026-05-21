@@ -242,7 +242,11 @@ def _resolve_destination(payload: RoutePayload) -> dict[str, Any]:
         if place is not None:
             return place
 
-    raise HTTPException(status_code=404, detail="Destinazione non trovata")
+    raise HTTPException(
+        status_code=404,
+        detail="Non ho trovato questa destinazione a Trento o Rovereto. "
+               "Prova con un indirizzo o un nome più preciso.",
+    )
 
 
 def _leg(
@@ -283,17 +287,16 @@ def _suggestion(
     }
 
 
-def _enrich_walk_legs(suggestions: list[dict[str, Any]]) -> None:
-    """Replace each walking leg's straight line with real pavement geometry.
-
-    Unique origin/destination pairs are resolved concurrently against the OSRM
-    foot-routing service; any leg the service can't resolve keeps its straight
-    line. Suggestion totals are recomputed afterwards by the caller.
-    """
+def _enrich_legs_by_mode(
+    suggestions: list[dict[str, Any]],
+    modes: set[str],
+    fetcher,
+) -> None:
+    """Replace straight-line polylines with real route geometry for the given modes."""
     jobs: dict[tuple[float, float, float, float], list[dict[str, Any]]] = {}
     for s in suggestions:
         for leg in s["legs"]:
-            if leg["mode"] != "walk":
+            if leg["mode"] not in modes:
                 continue
             frm, to = leg["from"], leg["to"]
             key = (
@@ -306,7 +309,7 @@ def _enrich_walk_legs(suggestions: list[dict[str, Any]]) -> None:
         return
 
     def fetch(key: tuple[float, float, float, float]):
-        return key, osrm.walk_route(*key)
+        return key, fetcher(*key)
 
     with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
         for key, geom in pool.map(fetch, list(jobs.keys())):
@@ -316,6 +319,14 @@ def _enrich_walk_legs(suggestions: list[dict[str, Any]]) -> None:
                 leg["polyline"]     = geom["polyline"]
                 leg["distance_m"]   = round(geom["distance_m"])
                 leg["duration_min"] = round(geom["duration_min"], 1)
+
+
+def _enrich_walk_legs(suggestions: list[dict[str, Any]]) -> None:
+    _enrich_legs_by_mode(suggestions, {"walk"}, osrm.walk_route)
+
+
+def _enrich_drive_legs(suggestions: list[dict[str, Any]]) -> None:
+    _enrich_legs_by_mode(suggestions, {"drive", "taxi"}, osrm.drive_route)
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +399,8 @@ def _build_suggestions(origin: dict[str, Any], dest: dict[str, Any]) -> list[dic
     out: list[dict[str, Any]] = []
     here = "La tua posizione"
 
+    straight_m = haversine_m(origin["lat"], origin["lng"], dest["lat"], dest["lng"])
+
     # 1. Walk — always available.
     walk = _leg("walk", origin, dest, label_from=here, label_to=dest["name"])
     out.append(_suggestion(
@@ -397,20 +410,27 @@ def _build_suggestions(origin: dict[str, Any], dest: dict[str, Any]) -> list[dic
     ))
 
     # 2. Transit — walk to nearest stop, ride the bus, walk from the stop near D.
+    #    Only add when the bus leg is in the right direction (destination stop is
+    #    closer to the destination than to the origin) and actually saves time.
     o_stop = _nearest(origin, _BUS_STOPS)
     d_stop = _nearest(dest, _BUS_STOPS)
     if o_stop and d_stop and o_stop["id"] != d_stop["id"]:
-        legs = [
-            _leg("walk", origin, o_stop, label_from=here, label_to=o_stop["name"]),
-            _leg("bus", o_stop, d_stop, label_from=o_stop["name"],
-                 label_to=d_stop["name"], overhead_min=6.0),
-            _leg("walk", d_stop, dest, label_from=d_stop["name"], label_to=dest["name"]),
-        ]
-        out.append(_suggestion(
-            "transit", "Bus urbano", "🚌",
-            f"Bus dalla fermata {o_stop['name']}",
-            legs, 1.50,
-        ))
+        walk_to_stop_m = haversine_m(origin["lat"], origin["lng"], o_stop["lat"], o_stop["lng"])
+        walk_from_stop_m = haversine_m(d_stop["lat"], d_stop["lng"], dest["lat"], dest["lng"])
+        # Skip if the walk to/from stops alone is longer than just walking to the destination,
+        # or if both stops are basically at the same location as origin/destination.
+        if walk_to_stop_m + walk_from_stop_m < straight_m * 1.4:
+            legs = [
+                _leg("walk", origin, o_stop, label_from=here, label_to=o_stop["name"]),
+                _leg("bus", o_stop, d_stop, label_from=o_stop["name"],
+                     label_to=d_stop["name"], overhead_min=6.0),
+                _leg("walk", d_stop, dest, label_from=d_stop["name"], label_to=dest["name"]),
+            ]
+            out.append(_suggestion(
+                "transit", "Bus urbano", "🚌",
+                f"Bus dalla fermata {o_stop['name']}",
+                legs, 1.50,
+            ))
 
     # 3. Park & walk — drive your own car, park near D, finish on foot.
     d_park = _nearest(dest, _PARKING)
@@ -457,26 +477,47 @@ def _build_suggestions(origin: dict[str, Any], dest: dict[str, Any]) -> list[dic
         out.append(train)
 
     # 7. Park & Ride — drive, park at the station, finish by train. The product's
-    #    flagship: it is what turns station parking into a through-trip.
-    park_ride = _build_park_ride(origin, dest)
+    #    flagship: only surface it when the trip is long enough for it to make
+    #    sense (> 4 km straight-line — intra-city trips don't need park+train).
+    park_ride = _build_park_ride(origin, dest) if straight_m >= 4_000 else None
     if park_ride is not None:
         out.append(park_ride)
 
-    # Upgrade walking legs to real pavement geometry, then recompute totals so
-    # the ranking reflects the (slightly longer) on-street distances.
+    # Upgrade walking and driving legs to real road/pavement geometry, then
+    # recompute totals so the ranking reflects on-street distances.
     _enrich_walk_legs(out)
+    _enrich_drive_legs(out)
     for s in out:
         s["total_distance_m"] = sum(leg["distance_m"] for leg in s["legs"])
         s["total_duration_min"] = round(
             sum(leg["duration_min"] for leg in s["legs"]), 1
         )
 
-    # Rank by total travel time, then surface Park & Ride first when available —
-    # it is the itinerary the system is built to recommend.
+    # Drop drive-and-park itineraries that would still leave an unrealistic
+    # walk (> 3 km) — it means no parking or car-share sits near the
+    # destination, so the option is not actually viable. "A piedi" is exempt:
+    # one long walking leg is the whole point of it.
+    def _viable(s: dict[str, Any]) -> bool:
+        if s["id"] == "walk":
+            return True
+        return all(
+            not (leg["mode"] == "walk" and leg["distance_m"] > 3000)
+            for leg in s["legs"]
+        )
+
+    out = [s for s in out if _viable(s)]
+
+    # Rank by total travel time.
     out.sort(key=lambda s: s["total_duration_min"])
+
+    # Promote Park & Ride to the top only when it's actually competitive —
+    # within 50 % of the fastest option (avoids surfacing it over a 5-min walk).
     if park_ride is not None and park_ride in out:
-        out.remove(park_ride)
-        out.insert(0, park_ride)
+        fastest_min = out[0]["total_duration_min"]
+        if park_ride["total_duration_min"] <= fastest_min * 1.5:
+            out.remove(park_ride)
+            out.insert(0, park_ride)
+
     cheapest = min(out, key=lambda s: s["cost_eur"])
     for i, s in enumerate(out):
         s["recommended"] = i == 0

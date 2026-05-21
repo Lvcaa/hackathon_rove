@@ -578,11 +578,11 @@ function BusStopMarker({ feature }: { feature: MobilityFeature }) {
   return (
     <CircleMarker
       center={[coords[1], coords[0]]}
-      radius={7}
+      radius={4.5}
       pane="cs-bus-stops"
       pathOptions={{
         fillColor: color, fillOpacity: 0.85,
-        color, weight: 1.5, opacity: 0.9,
+        color, weight: 1, opacity: 0.9,
       }}
       eventHandlers={{
         click: () => {
@@ -611,10 +611,12 @@ function BusStopMarker({ feature }: { feature: MobilityFeature }) {
 
 // ── Bus stop clustering + viewport culling ──────────────────────────────────────
 
-const STOP_INDIVIDUAL_ZOOM = 15;  // at/above this zoom every visible stop is shown
-const CLUSTER_CELL_PX = 70;       // grid cell size (screen px) used to group stops
+const STOP_INDIVIDUAL_ZOOM = 16;  // at/above this zoom every visible stop is shown
+const CLUSTER_CELL_PX = 110;      // grid cell size (screen px) used to group stops
 const VIEWPORT_PAD = 0.3;         // render this far beyond the viewport for smooth pans
 const MAX_BUSES = 280;            // hard cap on rendered bus markers (perf ceiling)
+const BUS_INDIVIDUAL_ZOOM = 14.5; // at/above this zoom every individual bus is shown
+const BUS_CLUSTER_CELL_PX = 95;   // grid cell size (screen px) used to group buses
 
 // Re-renders its consumer whenever the map finishes moving or zooming.
 function useMapViewport() {
@@ -642,6 +644,26 @@ function clusterIcon(count: number, kind: BusKind) {
     ">${count}</div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
+  });
+}
+
+function busClusterIcon(count: number, kind: BusKind) {
+  const color = busColor(kind);
+  const h = count < 10 ? 24 : 28;
+  const w = count < 10 ? 44 : 52;
+  const r = h / 2;
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      width:${w}px;height:${h}px;border-radius:${r}px;
+      background:${color}e6;border:1.5px solid #fff;
+      box-shadow:0 3px 8px rgba(0,0,0,0.5);
+      display:flex;align-items:center;justify-content:center;
+      color:#fff;font-weight:800;font-size:11px;cursor:pointer;
+      gap:3px;
+    ">🚌${count}</div>`,
+    iconSize: [w, h],
+    iconAnchor: [w / 2, h / 2],
   });
 }
 
@@ -723,7 +745,7 @@ function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
   // polls and `.cs-bus-marker { transition: transform }` can animate position.
   const iconCache = useRef<Map<string, L.DivIcon>>(new Map());
   const map = useMap();
-  const { bounds } = useMapViewport();
+  const { bounds, zoom } = useMapViewport();
   const [routeLine, setRouteLine] = useState<RouteLine | null>(null);
   const routeReq = useRef(0);
 
@@ -740,6 +762,44 @@ function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
       .slice(0, MAX_BUSES)
       .map((e) => e.b);
   }, [vehicles, bounds]);
+
+  const { individuals, clusters } = useMemo(() => {
+    if (zoom >= BUS_INDIVIDUAL_ZOOM) {
+      return { individuals: visible, clusters: [] };
+    }
+
+    // Bucket visible buses into a fixed pixel grid at the current zoom.
+    const cells = new Map<string, BusVehicle[]>();
+    for (const b of visible) {
+      const p = map.project([b.lat, b.lon], zoom);
+      // Group by cell and kind (urban vs extraurban) so colors match
+      const key = `${b.kind}:${Math.floor(p.x / BUS_CLUSTER_CELL_PX)}:${Math.floor(p.y / BUS_CLUSTER_CELL_PX)}`;
+      const cell = cells.get(key);
+      if (cell) cell.push(b);
+      else cells.set(key, [b]);
+    }
+
+    const individuals: BusVehicle[] = [];
+    const clusters: { lat: number; lon: number; count: number; kind: BusKind }[] = [];
+    for (const group of cells.values()) {
+      if (group.length === 1) {
+        individuals.push(group[0]);
+        continue;
+      }
+      let lat = 0, lon = 0;
+      for (const b of group) {
+        lat += b.lat;
+        lon += b.lon;
+      }
+      clusters.push({
+        lat: lat / group.length,
+        lon: lon / group.length,
+        count: group.length,
+        kind: group[0].kind,
+      });
+    }
+    return { individuals, clusters };
+  }, [visible, zoom, map]);
 
   // Tapping the map background dismisses the route preview (marker clicks
   // don't bubble to the map, so switching buses never triggers this).
@@ -788,7 +848,19 @@ function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
           />
         </Pane>
       )}
-      {visible.map((bus) => {
+      {/* Bus clusters */}
+      {clusters.map((cl) => (
+        <Marker
+          key={`bus-cl-${cl.kind}-${cl.lat.toFixed(5)}:${cl.lon.toFixed(5)}`}
+          position={[cl.lat, cl.lon]}
+          icon={busClusterIcon(cl.count, cl.kind)}
+          eventHandlers={{
+            click: () => map.flyTo([cl.lat, cl.lon], Math.min(zoom + 2, BUS_INDIVIDUAL_ZOOM)),
+          }}
+        />
+      ))}
+      {/* Individual buses */}
+      {individuals.map((bus) => {
         const bucket = Math.round(bus.bearing / 15) * 15;
         const cacheKey = `${bus.id}:${bus.route}:${bus.kind}:${bus.live}:${bucket}`;
         let icon = iconCache.current.get(cacheKey);

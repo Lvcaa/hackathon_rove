@@ -8,8 +8,7 @@ interface Props {
   searchTrigger?: { destination: string; nonce: number } | null;
   suggestions?: { name: string; category?: 'stations' | 'taxi' | 'carsharing' | 'parking' }[];
   aiOrigin?: { lat: number; lng: number } | null;
-  onAIPlan?: (suggestion: RouteSuggestion) => void;
-  onAIClear?: () => void;
+  onRoutePreview?: (suggestion: RouteSuggestion | null) => void;
   onAIRequestLocation?: () => void;
 }
 

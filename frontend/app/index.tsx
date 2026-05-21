@@ -4,6 +4,7 @@ import { useMobilityData } from '../hooks/useMobilityData';
 import type { SuggestionItem } from '../components/BookingSheet.web';
 import { useLiveLocation } from '../hooks/useLiveLocation';
 import { MobilityFeature, CategoryKey } from '../types/mobility';
+import { RouteSuggestion } from '../types/routing';
 import { Colors } from '../constants/colors';
 import MapView from '../components/MapView';
 import BottomSheet from '../components/BottomSheet';
@@ -29,6 +30,7 @@ export default function MapScreen() {
     category: CategoryKey;
   } | null>(null);
   const [bookingTrigger, setBookingTrigger] = useState<{ destination: string; nonce: number } | null>(null);
+  const [activeRoute, setActiveRoute] = useState<RouteSuggestion | null>(null);
 
   // Build flat suggestion list for the SearchBar autocomplete from all mobility features
   const suggestions = useMemo<SuggestionItem[]>(() => {
@@ -104,6 +106,7 @@ export default function MapScreen() {
           locationStatus={locationStatus}
           recenterNonce={recenterNonce}
           onLocate={handleLocate}
+          activeRoute={activeRoute}
         />
         <LayerTogglePanel
           visible={visibleCategories}
@@ -122,6 +125,7 @@ export default function MapScreen() {
           searchTrigger={bookingTrigger}
           suggestions={suggestions}
           aiOrigin={location}
+          onRoutePreview={setActiveRoute}
           onAIRequestLocation={handleAIRequestLocation}
         />
       </View>

@@ -1079,56 +1079,324 @@ function SheetPanel({
   );
 }
 
+// ── Itinerary panel (the routing phase) ───────────────────────────────────────
+
+function fmtCostEur(eur: number): string {
+  return eur <= 0 ? 'Gratis' : `€ ${eur.toFixed(2).replace('.', ',')}`;
+}
+
+function fmtKm(metres: number): string {
+  return metres >= 1000 ? `${(metres / 1000).toFixed(1)} km` : `${Math.round(metres)} m`;
+}
+
+// One row per leg of the chosen itinerary: mode badge, endpoint, duration.
+function LegList({ legs }: { legs: RouteSuggestion['legs'] }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 11 }}>
+      {legs.map((leg, i) => {
+        const m = MODE_META[leg.mode];
+        return (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <span style={{
+              width: 24, height: 24, borderRadius: 7, flexShrink: 0,
+              background: m.color + '22', border: `1px solid ${m.color}55`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12,
+            }}>{m.icon}</span>
+            <span style={{
+              flex: 1, minWidth: 0, fontSize: 12, color: 'rgba(255,255,255,0.82)',
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {m.label} → {leg.to.name}
+            </span>
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: m.color, flexShrink: 0 }}>
+              {Math.max(1, Math.round(leg.duration_min))}′
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RouteSheetPanel({
+  status, response, error, selectedId, onSelectMode, onBook, onDismiss, dismissing,
+}: {
+  status: ReturnType<typeof useRouting>['status'];
+  response: ReturnType<typeof useRouting>['response'];
+  error: string | null;
+  selectedId: string | null;
+  onSelectMode: (id: string) => void;
+  onBook: () => void;
+  onDismiss: () => void;
+  dismissing: boolean;
+}) {
+  const selected =
+    response?.suggestions.find((s) => s.id === selectedId) ??
+    response?.suggestions[0] ?? null;
+  const destName = response?.destination.name ?? 'Destinazione';
+
+  return (
+    <div style={{ width: '100%' }}>
+      <div
+        className={dismissing ? 'cs-pane-out' : 'cs-pane-in'}
+        style={{
+          fontFamily: FONT,
+          background: 'rgba(17,19,27,0.82)',
+          backdropFilter: 'blur(30px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+          border: '1px solid rgba(255,255,255,0.12)',
+          borderRadius: 24,
+          boxShadow: '0 28px 80px rgba(0,0,0,0.78), inset 0 1px 0 rgba(255,255,255,0.08)',
+          maxHeight: 'min(74vh, 620px)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          flexShrink: 0, display: 'flex', alignItems: 'center', gap: 11,
+          padding: '12px 13px', borderBottom: '1px solid rgba(255,255,255,0.07)',
+        }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: 12, flexShrink: 0,
+            background: C.cyan + '18', border: `1px solid ${C.cyan}33`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.cyan,
+          }}>
+            {status === 'loading' ? <Spinner size={16} /> : <Ico.MapPin />}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 9.5, fontWeight: 700, color: C.muted,
+              textTransform: 'uppercase', letterSpacing: '0.11em',
+            }}>
+              {status === 'loading' ? 'Calcolo itinerari' : 'Itinerario verso'}
+            </div>
+            <div style={{
+              fontSize: 15, fontWeight: 700, color: C.text, letterSpacing: '-0.01em',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1,
+            }}>
+              {status === 'loading' ? 'Ricerca percorsi…' : destName}
+            </div>
+          </div>
+          <button
+            className="cs-icon-btn"
+            onClick={onDismiss}
+            aria-label="Chiudi"
+            style={{
+              width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+              background: 'rgba(255,255,255,0.06)', border: `1px solid ${C.border}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', color: C.muted, fontFamily: FONT,
+            }}
+          >
+            <Ico.X />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '14px 14px 4px' }}>
+          {status === 'loading' && (
+            <div className="cs-fade-in" style={{
+              padding: '34px 0', display: 'flex', flexDirection: 'column',
+              alignItems: 'center', gap: 12,
+            }}>
+              <Spinner size={26} />
+              <span style={{ fontSize: 13, color: C.muted, fontWeight: 500 }}>
+                Calcolo dei percorsi multimodali…
+              </span>
+            </div>
+          )}
+
+          {status === 'error' && (
+            <div style={{
+              background: '#ef444418', border: '1px solid #ef444440',
+              borderRadius: 12, padding: '12px 14px', margin: '6px 0',
+              fontSize: 12.5, color: '#ef4444', fontWeight: 500, lineHeight: 1.5,
+            }}>
+              {error ?? 'Impossibile calcolare un percorso verso questa destinazione.'}
+            </div>
+          )}
+
+          {status === 'ready' && selected && response && (
+            <div className="cs-fade-in">
+              <div style={{
+                fontSize: 10, fontWeight: 700, color: C.muted,
+                textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 7,
+              }}>
+                Scegli come arrivare
+              </div>
+              <ModeChips
+                suggestions={response.suggestions}
+                selectedId={selected.id}
+                onSelect={onSelectMode}
+                accent={C.cyan}
+              />
+
+              {/* Selected itinerary detail */}
+              <div style={{
+                marginTop: 12, background: 'rgba(255,255,255,0.03)', borderRadius: 14,
+                border: '1px solid rgba(255,255,255,0.08)', padding: '13px 14px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 18 }}>{selected.icon}</span>
+                  <span style={{ fontSize: 14, fontWeight: 800, color: C.text }}>
+                    {selected.label}
+                  </span>
+                  {selected.recommended && (
+                    <span style={{
+                      fontSize: 8.5, fontWeight: 800, color: C.green,
+                      border: `1px solid ${C.green}66`, borderRadius: 5, padding: '1px 5px',
+                      textTransform: 'uppercase', letterSpacing: '0.06em',
+                    }}>consigliato</span>
+                  )}
+                  {selected.cheapest && !selected.recommended && (
+                    <span style={{
+                      fontSize: 8.5, fontWeight: 800, color: C.cyan,
+                      border: `1px solid ${C.cyan}66`, borderRadius: 5, padding: '1px 5px',
+                      textTransform: 'uppercase', letterSpacing: '0.06em',
+                    }}>economico</span>
+                  )}
+                  <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: C.text, lineHeight: 1.1 }}>
+                      {Math.max(1, Math.round(selected.total_duration_min))} min
+                    </div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.yellow, marginTop: 1 }}>
+                      {fmtCostEur(selected.cost_eur)}
+                    </div>
+                  </div>
+                </div>
+                <LegList legs={selected.legs} />
+                <div style={{
+                  fontSize: 9.5, color: C.faint, marginTop: 10, fontWeight: 600,
+                }}>
+                  {fmtKm(selected.total_distance_m)} totali · {fmtKm(response.straight_line_m)} in linea d'aria
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer — book the chosen itinerary */}
+        {status === 'ready' && selected && (
+          <div style={{
+            flexShrink: 0, padding: '12px 14px',
+            borderTop: '1px solid rgba(255,255,255,0.07)',
+          }}>
+            <button
+              className="cs-btn-book"
+              onClick={onBook}
+              style={{
+                width: '100%', padding: '12px', background: C.cyan, color: '#04121a',
+                border: 'none', borderRadius: 13, fontSize: 13, fontWeight: 800,
+                cursor: 'pointer', fontFamily: FONT, letterSpacing: '0.02em',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+              }}
+            >
+              Prenota · {selected.label} <Ico.ArrowRight />
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Root export ───────────────────────────────────────────────────────────────
+
+// Trento city centre — origin fallback when the user hasn't shared a GPS fix.
+const TRENTO_CENTER = { lat: 46.0716, lng: 11.1185 };
 
 interface Props {
   onRouteReady?: (waypoints: [number, number][], dest: [number, number]) => void;
   searchTrigger?: { destination: string; nonce: number } | null;
   suggestions?: SuggestionItem[];
-  /** Live user position passed to the AI planner so it routes from the user. */
+  /** Live user position — routes are computed from here (search and AI). */
   aiOrigin?: { lat: number; lng: number } | null;
-  /** Fired with the itinerary the AI planner chose — draw it on the map. */
-  onAIPlan?: (suggestion: RouteSuggestion) => void;
-  /** Fired when the AI plan is dismissed — clear the route from the map. */
-  onAIClear?: () => void;
-  /** Ask the host to start geolocation for the AI planner. */
+  /** Fired with the itinerary currently in view — draw it on the map. */
+  onRoutePreview?: (suggestion: RouteSuggestion | null) => void;
+  /** Ask the host to start geolocation. */
   onAIRequestLocation?: () => void;
 }
 
 export default function BookingSheet({
   onRouteReady, searchTrigger, suggestions,
-  aiOrigin, onAIPlan, onAIClear, onAIRequestLocation,
+  aiOrigin, onRoutePreview, onAIRequestLocation,
 }: Props) {
   const { state, search, book, dismiss } = useBooking();
+  const {
+    status: routeStatus, response: routeResponse, error: routeError,
+    fetchRoutes, reset: resetRoute,
+  } = useRouting();
   const [query, setQuery] = useState('');
   const [dismissing, setDismissing] = useState(false);
   const [aiActive, setAiActive] = useState(false);
+  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const lastNonce = useRef<number | null>(null);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { injectStyles(); }, []);
 
+  const selectedRoute =
+    routeResponse?.suggestions.find((s) => s.id === selectedRouteId) ??
+    routeResponse?.suggestions[0] ?? null;
+
+  // Default the mode selection to the recommended (Park & Ride) itinerary.
+  useEffect(() => {
+    if (routeStatus === 'ready' && routeResponse) {
+      setSelectedRouteId((prev) =>
+        prev && routeResponse.suggestions.some((s) => s.id === prev)
+          ? prev
+          : (routeResponse.suggestions.find((s) => s.recommended)
+             ?? routeResponse.suggestions[0])?.id ?? null,
+      );
+    }
+  }, [routeStatus, routeResponse]);
+
+  // Draw the itinerary currently in view on the map. While the AI planner is
+  // open it owns the preview, so the search-side routing must not clobber it.
+  useEffect(() => {
+    if (aiActive) return;
+    onRoutePreview?.(selectedRoute);
+  }, [selectedRoute, onRoutePreview, aiActive]);
+
+  const closeAll = useCallback(() => {
+    dismiss();
+    resetRoute();
+    setSelectedRouteId(null);
+    setQuery('');
+    onRoutePreview?.(null);
+  }, [dismiss, resetRoute, onRoutePreview]);
+
   const handleDismiss = useCallback(() => {
     setDismissing(true);
     dismissTimer.current = setTimeout(() => {
-      dismiss();
+      closeAll();
       setDismissing(false);
     }, 280);
-  }, [dismiss]);
+  }, [closeAll]);
 
   useEffect(() => () => {
     if (dismissTimer.current) clearTimeout(dismissTimer.current);
   }, []);
 
-  // Auto-trigger from map "Naviga →" click — also ensures search panel is visible
+  // Run the multimodal router for a typed / tapped destination.
+  const handleSearch = useCallback((dest: string) => {
+    const d = dest.trim();
+    if (!d) return;
+    setQuery(d);
+    dismiss();                         // drop any booking in progress
+    setSelectedRouteId(null);
+    if (!aiOrigin) onAIRequestLocation?.();
+    fetchRoutes(aiOrigin ?? TRENTO_CENTER, { name: d });
+  }, [aiOrigin, onAIRequestLocation, fetchRoutes, dismiss]);
+
+  // Auto-trigger from a map "Naviga →" click.
   useEffect(() => {
     if (searchTrigger && searchTrigger.nonce !== lastNonce.current) {
       lastNonce.current = searchTrigger.nonce;
-      setQuery(searchTrigger.destination);
-      search(searchTrigger.destination);
       setAiActive(false);
+      handleSearch(searchTrigger.destination);
     }
-  }, [searchTrigger, search]);
+  }, [searchTrigger, handleSearch]);
 
   useEffect(() => {
     if (state.phase === 'confirmed' && state.confirmation && onRouteReady) {
@@ -1140,10 +1408,14 @@ export default function BookingSheet({
     }
   }, [state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSearch = useCallback((dest: string) => {
-    setQuery(dest);
-    search(dest);
-  }, [search]);
+  // "Prenota" on a routing itinerary → hand the destination to the booking flow.
+  const handleBookItinerary = useCallback(() => {
+    const destName = routeResponse?.destination.name;
+    if (destName) search(destName);
+  }, [routeResponse, search]);
+
+  const bookingActive = state.phase !== 'idle';
+  const routingActive = routeStatus !== 'idle';
 
   // Outer column anchors to the bottom. column-reverse means the search row
   // stays at the bottom edge and the sheet panel grows upward above it.
@@ -1156,15 +1428,15 @@ export default function BookingSheet({
       {/* Top row — squircle is fixed height matching the search bar */}
       <div style={{ display: 'flex', flexDirection: 'row', gap: 8, alignItems: 'flex-end' }}>
         {aiActive
-          ? <SearchSquircle onToggle={() => setAiActive(false)} />
-          : <AISquircle onToggle={() => setAiActive(true)} />
+          ? <SearchSquircle onToggle={() => { setAiActive(false); closeAll(); }} />
+          : <AISquircle onToggle={() => { setAiActive(true); closeAll(); }} />
         }
         <div style={{ flex: 1, minWidth: 0 }}>
           {aiActive ? (
             <AIPlannerPanel
               origin={aiOrigin ?? null}
-              onPlanReady={(s) => onAIPlan?.(s)}
-              onClear={() => onAIClear?.()}
+              onPlanReady={(s) => onRoutePreview?.(s)}
+              onClear={() => onRoutePreview?.(null)}
               onRequestLocation={onAIRequestLocation}
             />
           ) : (
@@ -1173,13 +1445,27 @@ export default function BookingSheet({
         </div>
       </div>
 
-      {/* Sheet panel — offset left to align with the right panel */}
-      {(state.phase !== 'idle' || dismissing) && (
+      {/* Sheet panel — offset left to align with the squircle gutter */}
+      {!aiActive && bookingActive && (
         <div style={{ marginLeft: 52 }}>
           <SheetPanel
             state={state}
             query={query}
             onBook={book}
+            onDismiss={handleDismiss}
+            dismissing={dismissing}
+          />
+        </div>
+      )}
+      {!aiActive && !bookingActive && routingActive && (
+        <div style={{ marginLeft: 52 }}>
+          <RouteSheetPanel
+            status={routeStatus}
+            response={routeResponse}
+            error={routeError}
+            selectedId={selectedRoute?.id ?? null}
+            onSelectMode={setSelectedRouteId}
+            onBook={handleBookItinerary}
             onDismiss={handleDismiss}
             dismissing={dismissing}
           />
