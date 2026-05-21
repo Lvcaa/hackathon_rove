@@ -1069,8 +1069,7 @@ function FitRoute({ route }: { route: RouteSuggestion }) {
         maxZoom: 16,
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [destKey, map]);
+  }, [destKey, map, route.id]);
   return null;
 }
 

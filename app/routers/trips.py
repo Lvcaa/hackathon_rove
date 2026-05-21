@@ -36,6 +36,7 @@ _OPTIONS: dict[str, dict[str, Any]] = {}
 
 _RESOURCES: dict[str, dict[str, Any]] = {
     "train_seats":      {"available": 42,  "total": 180},
+    "bus_tickets":      {"available": 86,  "total": 120},
     "parking_stazione": {"available": 34,  "total": 120},
     "bike_stazione":    {"available_bikes": 8, "available_docks": 12},
     # Taxi is dispatched on demand — no fixed pool to decrement
@@ -179,6 +180,8 @@ def _run_search_logic(destination: str) -> dict[str, Any]:
     with _lock:
         train_avail = _RESOURCES["train_seats"]["available"]
         train_total = _RESOURCES["train_seats"]["total"]
+        bus_avail   = _RESOURCES["bus_tickets"]["available"]
+        bus_total   = _RESOURCES["bus_tickets"]["total"]
         bike_avail  = _RESOURCES["bike_stazione"]["available_bikes"]
         bike_docks  = _RESOURCES["bike_stazione"]["available_docks"]
 
@@ -192,6 +195,7 @@ def _run_search_logic(destination: str) -> dict[str, Any]:
             park_zone_id = None
 
         train_oid = _new_option(dest_key, "train",        expires_at, display=display)
+        bus_oid   = _new_option(dest_key, "bus",          expires_at, display=display)
         park_oid  = _new_option(dest_key, "parking",      expires_at, zone_id=park_zone_id, display=display)
         taxi_oid  = _new_option(dest_key, "taxi",         expires_at, display=display)
         bike_oid  = _new_option(dest_key, "bike_sharing", expires_at, display=display)
@@ -207,6 +211,17 @@ def _run_search_logic(destination: str) -> dict[str, Any]:
             "platform":        dest["platform"],
             "available_seats": train_avail,
             "total_seats":     train_total,
+        },
+        {
+            "option_id":         bus_oid,
+            "type":              "bus",
+            "price_eur":         1.50,
+            "expires_at":        expires_at,
+            "route":             "5",
+            "departure_time":    _offset_iso(6),
+            "stop_name":         "Trento Stazione",
+            "available_tickets": bus_avail,
+            "total_tickets":     bus_total,
         },
         {
             "option_id":        park_oid,
@@ -278,6 +293,10 @@ def _run_book_logic(option_id: str) -> dict[str, Any]:
             _RESOURCES["train_seats"]["available"] = max(
                 0, _RESOURCES["train_seats"]["available"] - 1
             )
+        elif modality == "bus":
+            _RESOURCES["bus_tickets"]["available"] = max(
+                0, _RESOURCES["bus_tickets"]["available"] - 1
+            )
         elif modality == "parking":
             _RESOURCES["parking_stazione"]["available"] = max(
                 0, _RESOURCES["parking_stazione"]["available"] - 1
@@ -326,6 +345,15 @@ def _run_book_logic(option_id: str) -> dict[str, Any]:
             {"label": "Linea",     "value": dest["track"]},
             {"label": "Origine",   "value": "Trento"},
             {"label": "Validità",  "value": "Solo andata"},
+        ]
+    elif modality == "bus":
+        title    = "Bus urbano"
+        subtitle = "Linea 5 · Trento Stazione"
+        detail_lines = [
+            {"label": "Linea",     "value": "5"},
+            {"label": "Fermata",   "value": "Trento Stazione"},
+            {"label": "Partenza",  "value": _offset_iso(6)},
+            {"label": "Validità",  "value": "75 minuti"},
         ]
     elif modality == "parking":
         spot = _parking_spot(booking_id)

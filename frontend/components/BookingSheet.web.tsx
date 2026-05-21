@@ -5,8 +5,9 @@ import AIPlannerPanel from './AIPlannerPanel';
 import ModeChips from './ModeChips';
 import { RouteSuggestion, MODE_META } from '../types/routing';
 import {
-  ModalityOption, TrainModality, ParkingModality,
+  ModalityOption, ModalityType, TrainModality, ParkingModality,
   TaxiModality, BikeSharingModality, TripBookResponse,
+  BusModality,
 } from '../types/booking';
 
 // ── CSS injection ─────────────────────────────────────────────────────────────
@@ -213,6 +214,7 @@ const C = {
 // Accent colour per modality
 const MODALITY_COLOR: Record<string, string> = {
   train:        C.cyan,
+  bus:          '#76b82a',
   parking:      C.green,
   taxi:         C.yellow,
   bike_sharing: C.purple,
@@ -247,6 +249,14 @@ const Ico = {
       <path d="M5 17H3a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h11l4 4v4a2 2 0 0 1-2 2h-2"/>
       <circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/>
       <path d="M5 9V7"/>
+    </svg>
+  ),
+  Bus: () => (
+    <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"
+      strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+      <rect x="5" y="3" width="14" height="16" rx="3"/>
+      <path d="M5 10h14M8 19l-2 3M18 22l-2-3"/>
+      <circle cx="8.5" cy="15.5" r="1"/><circle cx="15.5" cy="15.5" r="1"/>
     </svg>
   ),
   Bike: () => (
@@ -292,6 +302,7 @@ const Ico = {
 // Modality icon lookup
 function ModalityIcon({ type }: { type: string }) {
   if (type === 'train')        return <Ico.Train />;
+  if (type === 'bus')          return <Ico.Bus />;
   if (type === 'parking')      return <Ico.Parking />;
   if (type === 'taxi')         return <Ico.Taxi />;
   if (type === 'bike_sharing') return <Ico.Bike />;
@@ -301,6 +312,7 @@ function ModalityIcon({ type }: { type: string }) {
 // Modality label lookup
 const MODALITY_LABEL: Record<string, string> = {
   train:        'Treno Regionale',
+  bus:          'Bus urbano',
   parking:      'Parcheggio',
   taxi:         'Taxi',
   bike_sharing: 'Bike Sharing',
@@ -564,6 +576,15 @@ function ModalitySubtitle({ modality, color }: { modality: ModalityOption; color
       </div>
     );
   }
+  if (modality.type === 'bus') {
+    const m = modality as BusModality;
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
+        <span style={{ fontSize: 11, color, fontWeight: 600 }}>Linea {m.route}</span>
+        <span style={{ fontSize: 10, color: C.faint }}>· {fmtTime(m.departure_time)}</span>
+      </div>
+    );
+  }
   // bike_sharing
   const m = modality as BikeSharingModality;
   return <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{m.station_name}</div>;
@@ -605,6 +626,20 @@ function ModalityDetail({ modality, color }: { modality: ModalityOption; color: 
         <Ico.Clock />
         <span>ETA circa <strong style={{ color: C.yellow }}>{m.eta_minutes} minuti</strong></span>
         <span style={{ marginLeft: 'auto', color: C.faint }}>{m.plate}</span>
+      </div>
+    );
+  }
+
+  if (modality.type === 'bus') {
+    const m = modality as BusModality;
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: C.muted, fontSize: 10 }}>
+          <Ico.MapPin /><span>{m.stop_name}</span>
+        </div>
+        <span style={{ fontSize: 11, fontWeight: 700, color }}>
+          {m.available_tickets}/{m.total_tickets} ticket
+        </span>
       </div>
     );
   }
@@ -676,6 +711,27 @@ function ModalityList({
   );
 }
 
+function DirectBookingStatus({ label }: { label: string }) {
+  return (
+    <div className="cs-fade-in" style={{
+      height: '100%', minHeight: 140,
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', gap: 12,
+      textAlign: 'center',
+    }}>
+      <Spinner size={28} />
+      <div>
+        <div style={{ fontSize: 14, color: C.text, fontWeight: 800, marginBottom: 4 }}>
+          Prenotazione {label}
+        </div>
+        <div style={{ fontSize: 12, color: C.muted, fontWeight: 500 }}>
+          Sto confermando il ticket selezionato.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Boarding pass view ────────────────────────────────────────────────────────
 
 function InfoRow({ label, value, color }: { label: string; value: string; color: string }) {
@@ -689,7 +745,80 @@ function InfoRow({ label, value, color }: { label: string; value: string; color:
   );
 }
 
-function BoardingPassView({ confirmation }: { confirmation: TripBookResponse }) {
+function routeDistanceMeters(points: [number, number][]): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const [lng1, lat1] = points[i - 1];
+    const [lng2, lat2] = points[i];
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    total += 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+  return Math.round(total);
+}
+
+function routeFromBoardingPass(confirmation: TripBookResponse): RouteSuggestion | null {
+  const bp = confirmation.boarding_pass;
+  const points = [...bp.route_waypoints] as [number, number][];
+  if (points.length === 0) return null;
+
+  const dest = bp.destination_coords as [number, number];
+  const last = points[points.length - 1];
+  if (last && (Math.abs(last[0] - dest[0]) > 0.00001 || Math.abs(last[1] - dest[1]) > 0.00001)) {
+    points.push(dest);
+  }
+
+  if (points.length < 2) return null;
+
+  const mode =
+    bp.modality_type === 'taxi' ? 'taxi' :
+    bp.modality_type === 'parking' ? 'drive' :
+    bp.modality_type === 'bus' ? 'bus' :
+    bp.modality_type === 'train' ? 'train' :
+    'walk';
+
+  const [startLng, startLat] = points[0];
+  const [destLng, destLat] = dest;
+  const distance = routeDistanceMeters(points);
+  const minutes = Math.max(1, Math.round(distance / (mode === 'walk' ? 80 : mode === 'train' ? 900 : 420)));
+
+  return {
+    id: `boarding-${bp.booking_id}-${Date.now()}`,
+    label: MODALITY_LABEL[bp.modality_type] ?? bp.title,
+    icon:
+      bp.modality_type === 'taxi' ? '🚕' :
+      bp.modality_type === 'parking' ? '🅿️' :
+      bp.modality_type === 'bus' ? '🚌' :
+      bp.modality_type === 'train' ? '🚆' :
+      '🚲',
+    summary: bp.subtitle,
+    total_distance_m: distance,
+    total_duration_min: minutes,
+    cost_eur: 0,
+    recommended: true,
+    cheapest: false,
+    legs: [{
+      mode,
+      from: { name: bp.origin, lat: startLat, lng: startLng },
+      to: { name: bp.destination, lat: destLat, lng: destLng },
+      distance_m: distance,
+      duration_min: minutes,
+      polyline: points,
+    }],
+  };
+}
+
+function BoardingPassView({
+  confirmation,
+  onNavigate,
+}: {
+  confirmation: TripBookResponse;
+  onNavigate: (confirmation: TripBookResponse) => void;
+}) {
   const bp    = confirmation.boarding_pass;
   const color = MODALITY_COLOR[bp.modality_type] ?? C.cyan;
 
@@ -754,6 +883,7 @@ function BoardingPassView({ confirmation }: { confirmation: TripBookResponse }) 
 
       <button
         className="cs-btn-ghost"
+        onClick={() => onNavigate(confirmation)}
         style={{
           width: '100%', padding: '13px',
           background: 'rgba(255,255,255,0.05)',
@@ -963,12 +1093,14 @@ function SheetPanel({
   state,
   query,
   onBook,
+  onNavigateToBookedRoute,
   onDismiss,
   dismissing,
 }: {
   state: ReturnType<typeof useBooking>['state'];
   query: string;
   onBook: (id: string) => void;
+  onNavigateToBookedRoute: (confirmation: TripBookResponse) => void;
   onDismiss: () => void;
   dismissing: boolean;
 }) {
@@ -976,6 +1108,7 @@ function SheetPanel({
   const height    = SHEET_HEIGHT[phase] ?? '0';
   const confirmed = phase === 'confirmed';
   const searching = phase === 'searching';
+  const directBooking = phase === 'booking' && state.directBookingLabel !== null;
   const accent    = confirmed ? C.green : C.cyan;
 
   const destLabel =
@@ -1024,13 +1157,13 @@ function SheetPanel({
               fontSize: 9.5, fontWeight: 700, color: accent === C.cyan ? C.muted : accent,
               textTransform: 'uppercase', letterSpacing: '0.11em',
             }}>
-              {confirmed ? 'Prenotazione confermata' : searching ? 'Ricerca in corso' : 'Destinazione'}
+              {confirmed ? 'Prenotazione confermata' : directBooking ? 'Prenotazione in corso' : searching ? 'Ricerca in corso' : 'Destinazione'}
             </div>
             <div style={{
               fontSize: 15, fontWeight: 700, color: C.text, letterSpacing: '-0.01em',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1,
             }}>
-              {searching ? 'Ricerca opzioni…' : destLabel}
+              {directBooking ? state.directBookingLabel : searching ? 'Ricerca opzioni…' : destLabel}
             </div>
           </div>
 
@@ -1064,14 +1197,18 @@ function SheetPanel({
             </div>
           )}
 
-          {(phase === 'selecting' || phase === 'booking') && (
+          {directBooking && state.directBookingLabel && (
+            <DirectBookingStatus label={state.directBookingLabel} />
+          )}
+
+          {!directBooking && (phase === 'selecting' || phase === 'booking') && (
             modalities.length > 0
               ? <ModalityList modalities={modalities} bookingOptionId={bookingOptionId} onBook={onBook} error={error} />
               : <SkeletonList />
           )}
 
           {phase === 'confirmed' && confirmation && (
-            <BoardingPassView confirmation={confirmation} />
+            <BoardingPassView confirmation={confirmation} onNavigate={onNavigateToBookedRoute} />
           )}
         </div>
       </div>
@@ -1087,6 +1224,15 @@ function fmtCostEur(eur: number): string {
 
 function fmtKm(metres: number): string {
   return metres >= 1000 ? `${(metres / 1000).toFixed(1)} km` : `${Math.round(metres)} m`;
+}
+
+function bookingModalityForRoute(s: RouteSuggestion | null): ModalityType | null {
+  if (!s) return null;
+  if (s.id === 'taxi' || s.legs.some((l) => l.mode === 'taxi')) return 'taxi';
+  if (s.id === 'transit' || s.legs.some((l) => l.mode === 'bus')) return 'bus';
+  if (s.id === 'park' || s.id === 'park_ride') return 'parking';
+  if (s.id === 'train' || s.legs.some((l) => l.mode === 'train')) return 'train';
+  return null;
 }
 
 // One row per leg of the chosen itinerary: mode badge, endpoint, duration.
@@ -1119,7 +1265,7 @@ function LegList({ legs }: { legs: RouteSuggestion['legs'] }) {
 }
 
 function RouteSheetPanel({
-  status, response, error, selectedId, onSelectMode, onBook, onDismiss, dismissing,
+  status, response, error, selectedId, onSelectMode, onBook, onDismiss, dismissing, bookingError,
 }: {
   status: ReturnType<typeof useRouting>['status'];
   response: ReturnType<typeof useRouting>['response'];
@@ -1129,11 +1275,13 @@ function RouteSheetPanel({
   onBook: () => void;
   onDismiss: () => void;
   dismissing: boolean;
+  bookingError: string | null;
 }) {
   const selected =
     response?.suggestions.find((s) => s.id === selectedId) ??
     response?.suggestions[0] ?? null;
   const destName = response?.destination.name ?? 'Destinazione';
+  const bookable = bookingModalityForRoute(selected) !== null;
 
   return (
     <div style={{ width: '100%' }}>
@@ -1271,6 +1419,15 @@ function RouteSheetPanel({
                   {fmtKm(selected.total_distance_m)} totali · {fmtKm(response.straight_line_m)} in linea d'aria
                 </div>
               </div>
+              {bookingError && (
+                <div style={{
+                  marginTop: 10, background: '#ef444418', border: '1px solid #ef444440',
+                  borderRadius: 10, padding: '9px 11px',
+                  fontSize: 11.5, color: '#f87171', fontWeight: 600, lineHeight: 1.45,
+                }}>
+                  {bookingError}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1284,14 +1441,16 @@ function RouteSheetPanel({
             <button
               className="cs-btn-book"
               onClick={onBook}
+              disabled={!bookable}
               style={{
                 width: '100%', padding: '12px', background: C.cyan, color: '#04121a',
                 border: 'none', borderRadius: 13, fontSize: 13, fontWeight: 800,
-                cursor: 'pointer', fontFamily: FONT, letterSpacing: '0.02em',
+                cursor: bookable ? 'pointer' : 'not-allowed', fontFamily: FONT, letterSpacing: '0.02em',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                opacity: bookable ? 1 : 0.48,
               }}
             >
-              Prenota · {selected.label} <Ico.ArrowRight />
+              {bookable ? <>Prenota · {selected.label} <Ico.ArrowRight /></> : 'Nessun ticket per questo chip'}
             </button>
           </div>
         )}
@@ -1321,7 +1480,7 @@ export default function BookingSheet({
   onRouteReady, searchTrigger, suggestions,
   aiOrigin, onRoutePreview, onAIRequestLocation,
 }: Props) {
-  const { state, search, book, dismiss } = useBooking();
+  const { state, book, bookDestination, dismiss } = useBooking();
   const {
     status: routeStatus, response: routeResponse, error: routeError,
     fetchRoutes, reset: resetRoute,
@@ -1330,6 +1489,7 @@ export default function BookingSheet({
   const [dismissing, setDismissing] = useState(false);
   const [aiActive, setAiActive] = useState(false);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
+  const [routeBookError, setRouteBookError] = useState<string | null>(null);
   const lastNonce = useRef<number | null>(null);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1362,6 +1522,7 @@ export default function BookingSheet({
     dismiss();
     resetRoute();
     setSelectedRouteId(null);
+    setRouteBookError(null);
     setQuery('');
     onRoutePreview?.(null);
   }, [dismiss, resetRoute, onRoutePreview]);
@@ -1385,6 +1546,7 @@ export default function BookingSheet({
     setQuery(d);
     dismiss();                         // drop any booking in progress
     setSelectedRouteId(null);
+    setRouteBookError(null);
     if (!aiOrigin) onAIRequestLocation?.();
     fetchRoutes(aiOrigin ?? TRENTO_CENTER, { name: d });
   }, [aiOrigin, onAIRequestLocation, fetchRoutes, dismiss]);
@@ -1408,11 +1570,37 @@ export default function BookingSheet({
     }
   }, [state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleNavigateToBookedRoute = useCallback((confirmation: TripBookResponse) => {
+    const route = routeFromBoardingPass(confirmation);
+    if (!route) return;
+    onRoutePreview?.(route);
+
+    const bp = confirmation.boarding_pass;
+    onRouteReady?.(
+      bp.route_waypoints as [number, number][],
+      bp.destination_coords as [number, number],
+    );
+  }, [onRoutePreview, onRouteReady]);
+
   // "Prenota" on a routing itinerary → hand the destination to the booking flow.
-  const handleBookItinerary = useCallback(() => {
+  const handleBookItinerary = useCallback(async () => {
     const destName = routeResponse?.destination.name;
-    if (destName) search(destName);
-  }, [routeResponse, search]);
+    const modality = bookingModalityForRoute(selectedRoute);
+    if (!destName || !selectedRoute) return;
+
+    if (!modality) {
+      setRouteBookError(`"${selectedRoute.label}" non ha un ticket prenotabile. Scegli Taxi, Bus, Treno o Parcheggio.`);
+      return;
+    }
+
+    setRouteBookError(null);
+    setQuery(destName);
+    try {
+      await bookDestination(destName, modality, selectedRoute.label);
+    } catch (err) {
+      setRouteBookError(String(err));
+    }
+  }, [bookDestination, routeResponse, selectedRoute]);
 
   const bookingActive = state.phase !== 'idle';
   const routingActive = routeStatus !== 'idle';
@@ -1452,6 +1640,7 @@ export default function BookingSheet({
             state={state}
             query={query}
             onBook={book}
+            onNavigateToBookedRoute={handleNavigateToBookedRoute}
             onDismiss={handleDismiss}
             dismissing={dismissing}
           />
@@ -1464,10 +1653,14 @@ export default function BookingSheet({
             response={routeResponse}
             error={routeError}
             selectedId={selectedRoute?.id ?? null}
-            onSelectMode={setSelectedRouteId}
+            onSelectMode={(id) => {
+              setSelectedRouteId(id);
+              setRouteBookError(null);
+            }}
             onBook={handleBookItinerary}
             onDismiss={handleDismiss}
             dismissing={dismissing}
+            bookingError={routeBookError}
           />
         </div>
       )}
