@@ -199,7 +199,7 @@ export default function DashboardScreen() {
       </div>
 
       {/* Parking occupancy */}
-      {parking && (
+      {parking?.summary && parking?.zones && (
         <div style={{
           background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16,
           overflow: 'hidden', marginBottom: 20,
