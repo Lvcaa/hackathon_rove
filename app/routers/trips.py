@@ -5,6 +5,8 @@ POST /api/trips/search  →  returns an array of bookable modalities, each with
                            its own unique option_id and per-resource snapshot.
 POST /api/trips/book    →  atomically locks the specific chosen modality and
                            returns a generalised boarding pass.
+GET  /api/trips         →  list all persisted bookings (most recent first).
+GET  /api/trips/{id}    →  retrieve a single booking by id.
 """
 
 from __future__ import annotations
@@ -19,6 +21,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.database import get_db
+
 router = APIRouter(prefix="/api/trips", tags=["trips"])
 
 # ---------------------------------------------------------------------------
@@ -27,7 +31,7 @@ router = APIRouter(prefix="/api/trips", tags=["trips"])
 
 _lock = Lock()
 
-# option_id → {"status": "PENDING"|"BOOKED", "modality": str, "dest_key": str, ...}
+# option_id → {status, modality, dest_key, expires_at, zone_id}
 _OPTIONS: dict[str, dict[str, Any]] = {}
 
 _RESOURCES: dict[str, dict[str, Any]] = {
@@ -117,15 +121,33 @@ def _reg_number(booking_id: str) -> str:
     return f"REG {2380 + abs(hash(booking_id)) % 50}"
 
 
-def _new_option(dest_key: str, modality: str, expires_at: str) -> str:
+def _new_option(
+    dest_key: str,
+    modality: str,
+    expires_at: str,
+    zone_id: str | None = None,
+) -> str:
     oid = str(uuid.uuid4())
     _OPTIONS[oid] = {
         "status":     "PENDING",
         "modality":   modality,
         "dest_key":   dest_key,
         "expires_at": expires_at,
+        "zone_id":    zone_id,
     }
     return oid
+
+
+def _nearest_parking_zone(dest_lng: float, dest_lat: float) -> dict | None:
+    """Return the nearest configured parking zone row from the DB, or None."""
+    with get_db() as conn:
+        return conn.execute(
+            """SELECT id, available_spots, max_capacity FROM parking_zones
+               WHERE max_capacity > 0
+               ORDER BY ((centroid_lat - ?) * (centroid_lat - ?) + (centroid_lng - ?) * (centroid_lng - ?))
+               LIMIT 1""",
+            (dest_lat, dest_lat, dest_lng, dest_lng),
+        ).fetchone()
 
 
 # ---------------------------------------------------------------------------
@@ -139,16 +161,27 @@ def _run_search_logic(destination: str) -> dict[str, Any]:
     now      = _now_utc()
     expires_at = _iso(now + timedelta(minutes=10))
 
+    # Query DB for the nearest configured parking zone (live availability).
+    dest_lng, dest_lat = dest["coords"]
+    db_park = _nearest_parking_zone(dest_lng, dest_lat)
+
     with _lock:
         train_avail = _RESOURCES["train_seats"]["available"]
         train_total = _RESOURCES["train_seats"]["total"]
-        park_avail  = _RESOURCES["parking_stazione"]["available"]
-        park_total  = _RESOURCES["parking_stazione"]["total"]
         bike_avail  = _RESOURCES["bike_stazione"]["available_bikes"]
         bike_docks  = _RESOURCES["bike_stazione"]["available_docks"]
 
+        if db_park:
+            park_avail   = db_park["available_spots"]
+            park_total   = db_park["max_capacity"]
+            park_zone_id = db_park["id"]
+        else:
+            park_avail   = _RESOURCES["parking_stazione"]["available"]
+            park_total   = _RESOURCES["parking_stazione"]["total"]
+            park_zone_id = None
+
         train_oid = _new_option(dest_key, "train",        expires_at)
-        park_oid  = _new_option(dest_key, "parking",      expires_at)
+        park_oid  = _new_option(dest_key, "parking",      expires_at, zone_id=park_zone_id)
         taxi_oid  = _new_option(dest_key, "taxi",         expires_at)
         bike_oid  = _new_option(dest_key, "bike_sharing", expires_at)
 
@@ -213,11 +246,21 @@ def _run_book_logic(option_id: str) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail="option_id not found or expired")
         if option["status"] == "BOOKED":
             raise HTTPException(status_code=409, detail="Already booked — resource conflict")
+
+        # Lazy expiry: check wall-clock time against the stored expires_at.
+        if option["status"] == "PENDING":
+            try:
+                if _now_utc() > datetime.fromisoformat(option["expires_at"]):
+                    option["status"] = "EXPIRED"
+            except (ValueError, TypeError):
+                pass
+
         if option["status"] == "EXPIRED":
             raise HTTPException(status_code=410, detail="Option window expired")
 
         option["status"] = "BOOKED"
         modality = option["modality"]
+        zone_id  = option.get("zone_id")
 
         updated_available_spots: int | None = None
         if modality == "train":
@@ -237,6 +280,31 @@ def _run_book_logic(option_id: str) -> dict[str, Any]:
     dest       = _resolve_dest(option["dest_key"])
     booking_id = f"CS-{str(uuid.uuid4())[:8].upper()}"
     now_iso    = _iso(_now_utc())
+
+    # Mirror parking decrement to the DB (uses the zone snapshotted at search time).
+    if modality == "parking":
+        if zone_id:
+            with get_db() as conn:
+                conn.execute(
+                    "UPDATE parking_zones SET available_spots = MAX(0, available_spots - 1), updated_at = ? WHERE id = ?",
+                    (now_iso, zone_id),
+                )
+        else:
+            dest_lng, dest_lat = dest["coords"]
+            with get_db() as conn:
+                row = conn.execute(
+                    """SELECT id FROM parking_zones WHERE max_capacity > 0 AND available_spots > 0
+                       ORDER BY ((centroid_lat - ?) * (centroid_lat - ?) + (centroid_lng - ?) * (centroid_lng - ?))
+                       LIMIT 1""",
+                    (dest_lat, dest_lat, dest_lng, dest_lng),
+                ).fetchone()
+                if row:
+                    zone_id = row["id"]
+                    conn.execute(
+                        "UPDATE parking_zones SET available_spots = MAX(0, available_spots - 1), updated_at = ? WHERE id = ?",
+                        (now_iso, zone_id),
+                    )
+
 
     if modality == "train":
         title    = _reg_number(booking_id)
@@ -276,6 +344,18 @@ def _run_book_logic(option_id: str) -> dict[str, Any]:
             {"label": "Stazione",         "value": "Bike Sharing – Stazione"},
             {"label": "Tariffa",          "value": "€ 1,00 / 30 min"},
         ]
+
+    # Persist the booking to the DB.
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO trips (id, destination_name, parking_id, status, created_at) VALUES (?,?,?,?,?)",
+            (booking_id, dest["display"], zone_id if modality == "parking" else None, "confirmed", now_iso),
+        )
+        for i, line in enumerate(detail_lines):
+            conn.execute(
+                "INSERT INTO trip_steps (trip_id, step_order, action, detail) VALUES (?,?,?,?)",
+                (booking_id, i, line["label"], line["value"]),
+            )
 
     return {
         "booking_id":              booking_id,
@@ -320,3 +400,55 @@ async def search_trips(payload: SearchPayload) -> dict[str, Any]:
 async def book_trip(payload: BookPayload) -> dict[str, Any]:
     await asyncio.sleep(0.4)
     return _run_book_logic(payload.option_id)
+
+
+# ---------------------------------------------------------------------------
+# Booking retrieval
+# ---------------------------------------------------------------------------
+
+
+@router.get("")
+def list_trips(limit: int = 20) -> dict[str, Any]:
+    """List all confirmed bookings, most recent first."""
+    limit = max(1, min(limit, 100))
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, destination_name, parking_id, status, created_at FROM trips ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return {
+        "trips": [
+            {
+                "booking_id":       r["id"],
+                "destination_name": r["destination_name"],
+                "parking_id":       r["parking_id"],
+                "status":           r["status"],
+                "created_at":       r["created_at"],
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.get("/{booking_id}")
+def get_trip(booking_id: str) -> dict[str, Any]:
+    """Retrieve a single booking and its detail steps by booking id."""
+    with get_db() as conn:
+        trip = conn.execute(
+            "SELECT id, destination_name, parking_id, status, created_at FROM trips WHERE id = ?",
+            (booking_id,),
+        ).fetchone()
+        if not trip:
+            raise HTTPException(status_code=404, detail="Booking not found")
+        steps = conn.execute(
+            "SELECT action, detail FROM trip_steps WHERE trip_id = ? ORDER BY step_order",
+            (booking_id,),
+        ).fetchall()
+    return {
+        "booking_id":       trip["id"],
+        "destination_name": trip["destination_name"],
+        "parking_id":       trip["parking_id"],
+        "status":           trip["status"],
+        "created_at":       trip["created_at"],
+        "detail_lines":     [{"label": s["action"], "value": s["detail"]} for s in steps],
+    }

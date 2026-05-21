@@ -85,9 +85,6 @@ def init_db() -> None:
 
 
 def _seed_data(conn: sqlite3.Connection) -> None:
-    if conn.execute("SELECT COUNT(*) FROM destinations").fetchone()[0] > 0:
-        return
-
     now = datetime.now(timezone.utc).isoformat()
 
     try:
@@ -103,6 +100,21 @@ def _seed_data(conn: sqlite3.Connection) -> None:
                 continue
     except Exception as e:
         print(f"[seed] stazioni.csv skipped: {e}")
+
+    try:
+        df = pd.read_csv(f"{DATASET_DIR}/taxi.csv", sep=";")
+        for i, row in df.iterrows():
+            try:
+                lat = float(row["x"])
+                lng = float(row["y"])
+                conn.execute(
+                    "INSERT OR IGNORE INTO destinations (id, name, type, lat, lng) VALUES (?,?,?,?,?)",
+                    (f"T{i+1:03d}", str(row["nome"]), "taxi", lat, lng),
+                )
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"[seed] taxi.csv skipped: {e}")
 
     try:
         df = pd.read_csv(f"{DATASET_DIR}/zone_parcheggio.csv", sep=";")
