@@ -18,9 +18,10 @@ from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.auth_users import CurrentUser, get_current_user
 from app.database import get_db
 
 router = APIRouter(prefix="/api/trips", tags=["trips"])
@@ -238,7 +239,7 @@ def _run_search_logic(destination: str) -> dict[str, Any]:
     }
 
 
-def _run_book_logic(option_id: str) -> dict[str, Any]:
+def _run_book_logic(option_id: str, user: CurrentUser) -> dict[str, Any]:
     with _lock:
         option = _OPTIONS.get(option_id)
 
@@ -348,8 +349,8 @@ def _run_book_logic(option_id: str) -> dict[str, Any]:
     # Persist the booking to the DB.
     with get_db() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO trips (id, destination_name, parking_id, status, created_at) VALUES (?,?,?,?,?)",
-            (booking_id, dest["display"], zone_id if modality == "parking" else None, "confirmed", now_iso),
+            "INSERT OR IGNORE INTO trips (id, destination_name, parking_id, status, created_at, user_id) VALUES (?,?,?,?,?,?)",
+            (booking_id, dest["display"], zone_id if modality == "parking" else None, "confirmed", now_iso, user.id),
         )
         for i, line in enumerate(detail_lines):
             conn.execute(
@@ -366,7 +367,7 @@ def _run_book_logic(option_id: str) -> dict[str, Any]:
         "updated_available_spots": updated_available_spots,
         "boarding_pass": {
             "booking_id":         booking_id,
-            "passenger":          "Passeggero CommuteSync",
+            "passenger":          user.full_name,
             "qr_payload":         f"CS:{booking_id}:{option_id[:8]}",
             "modality_type":      modality,
             "title":              title,
@@ -397,9 +398,12 @@ async def search_trips(payload: SearchPayload) -> dict[str, Any]:
 
 
 @router.post("/book")
-async def book_trip(payload: BookPayload) -> dict[str, Any]:
+async def book_trip(
+    payload: BookPayload,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
     await asyncio.sleep(0.4)
-    return _run_book_logic(payload.option_id)
+    return _run_book_logic(payload.option_id, user)
 
 
 # ---------------------------------------------------------------------------
@@ -408,13 +412,16 @@ async def book_trip(payload: BookPayload) -> dict[str, Any]:
 
 
 @router.get("")
-def list_trips(limit: int = 20) -> dict[str, Any]:
-    """List all confirmed bookings, most recent first."""
+def list_trips(
+    limit: int = 20,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """List the authenticated user's bookings, most recent first."""
     limit = max(1, min(limit, 100))
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, destination_name, parking_id, status, created_at FROM trips ORDER BY created_at DESC LIMIT ?",
-            (limit,),
+            "SELECT id, destination_name, parking_id, status, created_at FROM trips WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (user.id, limit),
         ).fetchall()
     return {
         "trips": [
@@ -431,14 +438,17 @@ def list_trips(limit: int = 20) -> dict[str, Any]:
 
 
 @router.get("/{booking_id}")
-def get_trip(booking_id: str) -> dict[str, Any]:
-    """Retrieve a single booking and its detail steps by booking id."""
+def get_trip(
+    booking_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Retrieve a single booking (owned by the authenticated user) and its detail steps."""
     with get_db() as conn:
         trip = conn.execute(
-            "SELECT id, destination_name, parking_id, status, created_at FROM trips WHERE id = ?",
+            "SELECT id, destination_name, parking_id, status, created_at, user_id FROM trips WHERE id = ?",
             (booking_id,),
         ).fetchone()
-        if not trip:
+        if not trip or trip["user_id"] != user.id:
             raise HTTPException(status_code=404, detail="Booking not found")
         steps = conn.execute(
             "SELECT action, detail FROM trip_steps WHERE trip_id = ? ORDER BY step_order",
