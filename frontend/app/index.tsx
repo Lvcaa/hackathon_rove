@@ -7,7 +7,6 @@ import { MobilityFeature, CategoryKey } from '../types/mobility';
 import { RouteSuggestion } from '../types/routing';
 import { Colors } from '../constants/colors';
 import MapView from '../components/MapView';
-import Sidebar from '../components/Sidebar';
 import BottomSheet from '../components/BottomSheet';
 import LayerTogglePanel from '../components/LayerTogglePanel';
 import BookingSheet from '../components/BookingSheet';
@@ -133,15 +132,6 @@ export default function MapScreen() {
 
   return (
     <View style={styles.container}>
-      {isDesktop && (
-        <Sidebar
-          data={data}
-          visibleCategories={visibleCategories}
-          onToggleCategory={handleToggleCategory}
-          onFeatureSelect={handleFeatureSelect}
-          selectedFeature={selectedFeature}
-        />
-      )}
       <View style={styles.mapWrapper}>
         <MapView
           data={data}
