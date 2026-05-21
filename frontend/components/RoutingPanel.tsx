@@ -4,10 +4,13 @@
 import { LiveLocation, LocationStatus } from '../hooks/useLiveLocation';
 import { RouteSuggestion } from '../types/routing';
 
+interface RouteTarget { name: string; lat: number; lng: number; }
+
 interface Props {
   origin: LiveLocation | null;
   locationStatus: LocationStatus;
-  target: { name: string; lat: number; lng: number } | null;
+  target: RouteTarget | null;
+  onTargetChange: (target: RouteTarget) => void;
   onEnableLocation: () => void;
   onClose: () => void;
   onRouteSelect: (suggestion: RouteSuggestion | null) => void;

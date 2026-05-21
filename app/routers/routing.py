@@ -93,6 +93,78 @@ _build_indexes()
 
 
 # ---------------------------------------------------------------------------
+# Searchable place catalogue — every named mobility resource, so the user can
+# pick a routing destination by typing instead of tapping the map.
+# ---------------------------------------------------------------------------
+
+# Each entry: {"name", "category", "lat", "lng", "detail"}.
+_PLACES: list[dict[str, Any]] = []
+
+
+def _build_places() -> None:
+    seen: set[str] = set()
+
+    def add(name: Any, category: str, lat: float, lng: float, detail: str) -> None:
+        if not name:
+            return
+        label = str(name).strip()
+        key = label.lower()
+        if not label or key in seen:
+            return
+        seen.add(key)
+        _PLACES.append({
+            "name": label, "category": category,
+            "lat": lat, "lng": lng, "detail": detail,
+        })
+
+    try:
+        for f in transit.get_bus_stops()["features"]:
+            c, p = f["geometry"]["coordinates"], f["properties"]
+            routes = (p.get("routes") or "").strip()
+            add(p.get("nome"), "busstop", c[1], c[0],
+                f"Linee {routes}" if routes else "Fermata bus")
+    except Exception:
+        pass
+
+    try:
+        for f in mobility.get_stations()["features"]:
+            c, p = f["geometry"]["coordinates"], f["properties"]
+            add(p.get("name"), "station", c[1], c[0], p.get("tratta") or "Stazione")
+    except Exception:
+        pass
+
+    try:
+        for f in mobility.get_carsharing()["features"]:
+            c, p = f["geometry"]["coordinates"], f["properties"]
+            add(p.get("via"), "carsharing", c[1], c[0], "Car sharing")
+    except Exception:
+        pass
+
+    try:
+        for f in mobility.get_taxi()["features"]:
+            c, p = f["geometry"]["coordinates"], f["properties"]
+            add(p.get("name"), "taxi", c[1], c[0], p.get("address") or "Posteggio taxi")
+    except Exception:
+        pass
+
+    try:
+        for f in mobility.get_parking()["features"]:
+            rings = f["geometry"]["coordinates"]
+            if not rings or not rings[0]:
+                continue
+            ext, p = rings[0], f["properties"]
+            add(p.get("descrizione") or p.get("zona"), "parking",
+                sum(x[1] for x in ext) / len(ext),
+                sum(x[0] for x in ext) / len(ext),
+                "Parcheggio")
+    except Exception:
+        pass
+
+
+_build_places()
+
+
+# ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
 
@@ -339,4 +411,24 @@ def suggest_routes(payload: RoutePayload) -> dict[str, Any]:
             haversine_m(origin["lat"], origin["lng"], dest["lat"], dest["lng"])
         ),
         "suggestions":     _build_suggestions(origin, dest),
+    }
+
+
+@router.get("/search")
+def search_places(q: str, limit: int = 8) -> dict[str, Any]:
+    """Fuzzy-search the catalogue of named mobility resources for a destination."""
+    query = (q or "").strip()
+    if len(query) < 2:
+        return {"results": []}
+
+    limit = max(1, min(limit, 15))
+    choices = {i: place["name"] for i, place in enumerate(_PLACES)}
+    matches = process.extract(
+        query, choices, scorer=fuzz.WRatio, limit=limit, score_cutoff=55
+    )
+    return {
+        "results": [
+            {**_PLACES[idx], "score": round(score)}
+            for _, score, idx in matches
+        ]
     }

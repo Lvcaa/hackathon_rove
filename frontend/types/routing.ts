@@ -37,6 +37,27 @@ export interface RouteResponse {
   suggestions: RouteSuggestion[];
 }
 
+// ── Destination search — mirrors GET /api/routing/search ─────────────────────
+
+export type PlaceCategory = 'busstop' | 'station' | 'parking' | 'carsharing' | 'taxi';
+
+export interface PlaceResult {
+  name: string;
+  category: PlaceCategory;
+  lat: number;
+  lng: number;
+  detail: string;
+  score: number;
+}
+
+export const PLACE_ICON: Record<PlaceCategory, string> = {
+  busstop:    '🚏',
+  station:    '🚉',
+  parking:    '🅿️',
+  carsharing: '🚗',
+  taxi:       '🚕',
+};
+
 // Per-mode display tokens, shared by the routing panel and the map route layer.
 export const MODE_META: Record<LegMode, { color: string; icon: string; label: string }> = {
   walk:  { color: '#9ca3af', icon: '🚶', label: 'A piedi' },

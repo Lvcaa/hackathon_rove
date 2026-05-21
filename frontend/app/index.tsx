@@ -43,6 +43,7 @@ export default function MapScreen() {
 
   const [visibleCategories, setVisibleCategories] = useState<Set<CategoryKey>>(new Set(ALL));
   const [recenterNonce, setRecenterNonce] = useState(0);
+  const [routingOpen, setRoutingOpen] = useState(false);
   const [routeTarget, setRouteTarget] = useState<RouteTarget | null>(null);
   const [activeRoute, setActiveRoute] = useState<RouteSuggestion | null>(null);
   const [selectedFeature, setSelectedFeature] = useState<{
@@ -70,10 +71,17 @@ export default function MapScreen() {
     const name = String(p.descrizione || p.zona || p.nome || p.name || p.via || category);
     setRouteTarget({ name, ...featureCoords(feature) });
     setActiveRoute(null);
+    setRoutingOpen(true);
+    if (locationStatus === 'idle' || locationStatus === 'error') startLocating();
+  }, [locationStatus, startLocating]);
+
+  const handleOpenRouting = useCallback(() => {
+    setRoutingOpen(true);
     if (locationStatus === 'idle' || locationStatus === 'error') startLocating();
   }, [locationStatus, startLocating]);
 
   const handleCloseRouting = useCallback(() => {
+    setRoutingOpen(false);
     setRouteTarget(null);
     setActiveRoute(null);
   }, []);
@@ -81,6 +89,7 @@ export default function MapScreen() {
   // Hand the chosen itinerary's destination off to the booking flow.
   const handleBookFromRoute = useCallback((destinationName: string) => {
     setBookingTrigger((prev) => ({ destination: destinationName, nonce: (prev?.nonce ?? 0) + 1 }));
+    setRoutingOpen(false);
     setRouteTarget(null);
     setActiveRoute(null);
   }, []);
@@ -119,6 +128,8 @@ export default function MapScreen() {
           recenterNonce={recenterNonce}
           onLocate={handleLocate}
           activeRoute={activeRoute}
+          onOpenRouting={handleOpenRouting}
+          routingPanelOpen={routingOpen}
         />
         <LayerTogglePanel
           visible={visibleCategories}
@@ -133,11 +144,12 @@ export default function MapScreen() {
             onFeatureSelect={handleFeatureSelect}
           />
         )}
-        {routeTarget && (
+        {routingOpen && (
           <RoutingPanel
             origin={location}
             locationStatus={locationStatus}
             target={routeTarget}
+            onTargetChange={setRouteTarget}
             onEnableLocation={startLocating}
             onClose={handleCloseRouting}
             onRouteSelect={setActiveRoute}

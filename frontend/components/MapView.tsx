@@ -20,6 +20,8 @@ interface Props {
   recenterNonce?: number;
   onLocate?: () => void;
   activeRoute?: RouteSuggestion | null;
+  onOpenRouting?: () => void;
+  routingPanelOpen?: boolean;
 }
 
 export default function MapView({ data, visibleCategories }: Props) {

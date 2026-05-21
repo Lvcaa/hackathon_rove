@@ -26,6 +26,8 @@ interface Props {
   recenterNonce?: number;
   onLocate?: () => void;
   activeRoute?: RouteSuggestion | null;
+  onOpenRouting?: () => void;
+  routingPanelOpen?: boolean;
 }
 
 const TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
@@ -879,6 +881,27 @@ function LocateButton({ status, onPress }: {
   );
 }
 
+// Floating glass control that opens the routing / directions panel.
+function RouteButton({ onPress }: { onPress: () => void }) {
+  return (
+    <div
+      onClick={onPress}
+      title="Indicazioni"
+      style={{
+        position: 'absolute', right: 10, bottom: 146, zIndex: 1000,
+        width: 42, height: 42, borderRadius: 12,
+        background: 'rgba(16,17,23,0.62)',
+        backdropFilter: 'blur(28px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(28px) saturate(180%)',
+        border: '1px solid rgba(255,255,255,0.16)',
+        boxShadow: '0 8px 28px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.12)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        cursor: 'pointer', userSelect: 'none', fontSize: 19,
+      }}
+    >🧭</div>
+  );
+}
+
 // ── Multimodal route overlay ────────────────────────────────────────────────────
 
 function createDestIcon() {
@@ -985,7 +1008,7 @@ export default function MapView({
   data, busStops, busVehicles, visibleCategories, selectedFeature,
   onFeatureSelect, onNavigate,
   userLocation, locationStatus = 'idle', recenterNonce = 0, onLocate,
-  activeRoute,
+  activeRoute, onOpenRouting, routingPanelOpen = false,
 }: Props) {
   const showUrbanStops = visibleCategories.has('busstops_urban');
   const showExtraStops = visibleCategories.has('busstops_extraurban');
@@ -1036,6 +1059,7 @@ export default function MapView({
         {activeRoute && <RouteLayer route={activeRoute} />}
       </MapContainer>
       {onLocate && <LocateButton status={locationStatus} onPress={onLocate} />}
+      {onOpenRouting && !routingPanelOpen && <RouteButton onPress={onOpenRouting} />}
     </View>
   );
 }

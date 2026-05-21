@@ -1,12 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useRouting } from '../hooks/useRouting';
+import { useDestinationSearch } from '../hooks/useDestinationSearch';
 import { LiveLocation, LocationStatus } from '../hooks/useLiveLocation';
-import { RouteSuggestion, RouteLeg, MODE_META } from '../types/routing';
+import {
+  RouteSuggestion, RouteLeg, PlaceResult, MODE_META, PLACE_ICON,
+} from '../types/routing';
+
+interface RouteTarget { name: string; lat: number; lng: number; }
 
 interface Props {
   origin: LiveLocation | null;
   locationStatus: LocationStatus;
-  target: { name: string; lat: number; lng: number } | null;
+  target: RouteTarget | null;
+  onTargetChange: (target: RouteTarget) => void;
   onEnableLocation: () => void;
   onClose: () => void;
   onRouteSelect: (suggestion: RouteSuggestion | null) => void;
@@ -33,10 +39,14 @@ function injectStyles() {
     @keyframes cs-route-spin { to { transform: rotate(360deg); } }
     .cs-route-panel { animation: cs-route-in 0.34s cubic-bezier(0.16,1,0.3,1) both; }
     .cs-route-card  { animation: cs-route-card-in 0.26s ease both; }
-    .cs-route-scroll::-webkit-scrollbar { width: 6px; }
-    .cs-route-scroll::-webkit-scrollbar-thumb {
+    .cs-route-scroll::-webkit-scrollbar,
+    .cs-route-results::-webkit-scrollbar { width: 6px; }
+    .cs-route-scroll::-webkit-scrollbar-thumb,
+    .cs-route-results::-webkit-scrollbar-thumb {
       background: rgba(255,255,255,0.14); border-radius: 3px;
     }
+    .cs-route-result:hover { background: rgba(255,255,255,0.07) !important; }
+    .cs-route-search-input::placeholder { color: rgba(255,255,255,0.34); }
   `;
   document.head.appendChild(s);
 }
@@ -109,9 +119,7 @@ function SuggestionCard({ s, selected, onSelect, index }: {
           {s.icon}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
-          }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{s.label}</span>
             {s.recommended && (
               <span style={{
@@ -169,10 +177,7 @@ function ItineraryHeader({ originLabel, destLabel }: { originLabel: string; dest
         width: 9, height: 9, borderRadius: '50%',
         background: '#3b82f6', border: '2px solid #fff',
       }} />, originLabel, true)}
-      <div style={{
-        width: 2, height: 12, marginLeft: 7,
-        background: 'rgba(255,255,255,0.18)',
-      }} />
+      <div style={{ width: 2, height: 12, marginLeft: 7, background: 'rgba(255,255,255,0.18)' }} />
       {row(<div style={{
         width: 11, height: 11, borderRadius: '50% 50% 50% 0',
         transform: 'rotate(-45deg)', background: '#ec4899', border: '2px solid #fff',
@@ -181,10 +186,99 @@ function ItineraryHeader({ originLabel, destLabel }: { originLabel: string; dest
   );
 }
 
+// ── Destination search field ────────────────────────────────────────────────────
+
+function DestinationSearch({ onPick }: { onPick: (p: PlaceResult) => void }) {
+  const { query, results, loading, search, clear } = useDestinationSearch();
+  const [focused, setFocused] = useState(false);
+  const showResults = focused && query.trim().length >= 2;
+
+  return (
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 7,
+        background: 'rgba(255,255,255,0.06)',
+        border: `1px solid ${focused ? ACCENT + '88' : 'rgba(255,255,255,0.12)'}`,
+        borderRadius: 10, padding: '0 10px', height: 38,
+        transition: 'border-color 0.15s ease',
+      }}>
+        <span style={{ fontSize: 13, opacity: 0.6 }}>🔍</span>
+        <input
+          className="cs-route-search-input"
+          value={query}
+          placeholder="Cerca una destinazione…"
+          onChange={(e) => search(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          style={{
+            flex: 1, minWidth: 0, height: '100%',
+            background: 'transparent', border: 'none', outline: 'none',
+            color: '#fff', fontSize: 12.5, fontWeight: 500,
+          }}
+        />
+        {query.length > 0 && (
+          <span
+            onMouseDown={(e) => { e.preventDefault(); clear(); }}
+            style={{ fontSize: 14, color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: '0 2px' }}
+          >×</span>
+        )}
+      </div>
+
+      {showResults && (
+        <div
+          className="cs-route-results"
+          style={{
+            position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0,
+            zIndex: 20, maxHeight: 248, overflowY: 'auto',
+            background: 'rgba(20,21,28,0.97)',
+            backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+            border: '1px solid rgba(255,255,255,0.14)', borderRadius: 11,
+            boxShadow: '0 18px 44px rgba(0,0,0,0.62)', padding: 4,
+          }}
+        >
+          {loading && results.length === 0 && (
+            <div style={{ padding: '12px 8px', fontSize: 11.5, color: 'rgba(255,255,255,0.45)', fontWeight: 600 }}>
+              Ricerca…
+            </div>
+          )}
+          {!loading && results.length === 0 && (
+            <div style={{ padding: '12px 8px', fontSize: 11.5, color: 'rgba(255,255,255,0.45)', fontWeight: 600 }}>
+              Nessun luogo trovato
+            </div>
+          )}
+          {results.map((r, i) => (
+            <div
+              key={`${r.category}-${r.name}-${i}`}
+              className="cs-route-result"
+              onMouseDown={(e) => { e.preventDefault(); onPick(r); clear(); setFocused(false); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 9,
+                padding: '8px 8px', borderRadius: 8, cursor: 'pointer',
+              }}
+            >
+              <span style={{ fontSize: 15, flexShrink: 0 }}>{PLACE_ICON[r.category]}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontSize: 12, fontWeight: 600, color: '#fff',
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>{r.name}</div>
+                <div style={{
+                  fontSize: 10, color: 'rgba(255,255,255,0.42)', marginTop: 1,
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>{r.detail}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function RoutingPanel({
-  origin, locationStatus, target,
+  origin, locationStatus, target, onTargetChange,
   onEnableLocation, onClose, onRouteSelect, onBook,
 }: Props) {
   const { status, response, error, fetchRoutes, reset } = useRouting();
@@ -195,12 +289,19 @@ export default function RoutingPanel({
   // Fetch once per destination, as soon as a live origin is available.
   const fetchedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!target || !origin) return;
+    if (!target) {
+      fetchedFor.current = null;
+      setSelectedId(null);
+      reset();
+      return;
+    }
+    if (!origin) return;
     const key = `${target.lat.toFixed(5)},${target.lng.toFixed(5)}`;
     if (fetchedFor.current === key) return;
     fetchedFor.current = key;
+    setSelectedId(null);
     fetchRoutes({ lat: origin.lat, lng: origin.lng }, target);
-  }, [target, origin, fetchRoutes]);
+  }, [target, origin, fetchRoutes, reset]);
 
   // Auto-select the recommended itinerary when results arrive.
   useEffect(() => {
@@ -236,7 +337,6 @@ export default function RoutingPanel({
         border: '1px solid rgba(255,255,255,0.13)',
         borderRadius: 18,
         boxShadow: '0 24px 64px rgba(0,0,0,0.66), inset 0 1px 0 rgba(255,255,255,0.1)',
-        overflow: 'hidden',
       }}
     >
       {/* Header */}
@@ -262,15 +362,23 @@ export default function RoutingPanel({
         >×</div>
       </div>
 
-      {/* Itinerary header */}
-      <div style={{ padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-        <ItineraryHeader
-          originLabel={origin ? 'La tua posizione' : 'Posizione non attiva'}
-          destLabel={target?.name ?? 'Destinazione'}
-        />
-        {response && (
-          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 9, fontWeight: 600 }}>
-            {fmtDist(response.straight_line_m)} in linea d'aria · {response.suggestions.length} opzioni
+      {/* Search + itinerary */}
+      <div style={{
+        padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.07)',
+        display: 'flex', flexDirection: 'column', gap: 12,
+      }}>
+        <DestinationSearch onPick={(p) => onTargetChange({ name: p.name, lat: p.lat, lng: p.lng })} />
+        {target && (
+          <div>
+            <ItineraryHeader
+              originLabel={origin ? 'La tua posizione' : 'Posizione non attiva'}
+              destLabel={target.name}
+            />
+            {response && (
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 9, fontWeight: 600 }}>
+                {fmtDist(response.straight_line_m)} in linea d'aria · {response.suggestions.length} opzioni
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -280,7 +388,16 @@ export default function RoutingPanel({
         className="cs-route-scroll"
         style={{ overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}
       >
-        {noLocation && (
+        {!target && (
+          <div style={{ textAlign: 'center', padding: '18px 8px' }}>
+            <div style={{ fontSize: 26, marginBottom: 8 }}>🗺️</div>
+            <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)', fontWeight: 600, lineHeight: 1.5 }}>
+              Cerca una destinazione qui sopra, oppure tocca un punto sulla mappa per ottenere le indicazioni.
+            </div>
+          </div>
+        )}
+
+        {target && noLocation && (
           <div style={{ textAlign: 'center', padding: '14px 4px' }}>
             <div style={{ fontSize: 26, marginBottom: 8 }}>📍</div>
             <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.75)', fontWeight: 600, lineHeight: 1.45 }}>
@@ -301,7 +418,7 @@ export default function RoutingPanel({
           </div>
         )}
 
-        {!noLocation && locationStatus === 'locating' && !response && (
+        {target && !noLocation && locationStatus === 'locating' && !response && (
           <div style={{ textAlign: 'center', padding: '20px 4px', color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: 600 }}>
             <div style={{
               width: 22, height: 22, margin: '0 auto 10px', borderRadius: '50%',
@@ -312,7 +429,7 @@ export default function RoutingPanel({
           </div>
         )}
 
-        {status === 'loading' && (
+        {target && status === 'loading' && (
           <div style={{ textAlign: 'center', padding: '20px 4px', color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: 600 }}>
             <div style={{
               width: 22, height: 22, margin: '0 auto 10px', borderRadius: '50%',
@@ -323,13 +440,13 @@ export default function RoutingPanel({
           </div>
         )}
 
-        {status === 'error' && (
+        {target && status === 'error' && (
           <div style={{ textAlign: 'center', padding: '16px 4px', color: '#f87171', fontSize: 12, fontWeight: 600 }}>
             {error ?? 'Impossibile calcolare il percorso'}
           </div>
         )}
 
-        {status === 'ready' && response && response.suggestions.map((s, i) => (
+        {target && status === 'ready' && response && response.suggestions.map((s, i) => (
           <SuggestionCard
             key={s.id}
             s={s}
