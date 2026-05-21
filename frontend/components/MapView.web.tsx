@@ -68,13 +68,18 @@ function injectStyles() {
     .leaflet-control-zoom a:hover { background:rgba(30,30,30,0.95) !important; color:#fff !important; }
     .leaflet-bar { border:1px solid rgba(255,255,255,0.1) !important; border-radius:10px !important; overflow:hidden; box-shadow:0 4px 16px rgba(0,0,0,0.6) !important; }
 
-    /* Bus vehicle marker animation */
-    @keyframes bus-pulse {
-      0%   { box-shadow: 0 0 0 0 rgba(249,115,22,0.7); }
-      70%  { box-shadow: 0 0 0 8px rgba(249,115,22,0); }
-      100% { box-shadow: 0 0 0 0 rgba(249,115,22,0); }
+    /* Live bus glow pulse */
+    @keyframes bus-glow-pulse {
+      0%   { filter: drop-shadow(0 0 5px rgba(249,115,22,0.55)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
+      50%  { filter: drop-shadow(0 0 14px rgba(249,115,22,1.0)) drop-shadow(0 0 24px rgba(249,115,22,0.4)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
+      100% { filter: drop-shadow(0 0 5px rgba(249,115,22,0.55)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
     }
-    .bus-vehicle-inner { animation: bus-pulse 2s infinite; }
+    .bus-vehicle-inner { animation: bus-glow-pulse 2.4s ease-in-out infinite; display:inline-block; }
+
+    /* Glide the marker between polled positions (matches BUS_REFRESH_MS).
+       Suppressed during zoom so buses don't lag behind the map. */
+    .cs-bus-marker { transition: transform 3s linear; }
+    .leaflet-zoom-anim .cs-bus-marker { transition: none; }
   `;
   document.head.appendChild(style);
 }
@@ -104,29 +109,42 @@ function createPointIcon(category: CategoryKey) {
   });
 }
 
+// Top-down SVG bus icon. Front = top of SVG (North = 0°).
+// Rotating by compass bearing directly maps to CSS rotate().
+function busSvg(route: string) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="62" viewBox="0 0 40 62" fill="none">
+    <!-- Body -->
+    <rect x="3" y="3" width="34" height="56" rx="9" fill="#f97316"/>
+    <!-- Windshield (front, top) -->
+    <rect x="7" y="6" width="26" height="13" rx="5" fill="rgba(255,255,255,0.30)"/>
+    <!-- Horizontal panel seams -->
+    <rect x="3" y="23" width="34" height="1.5" fill="rgba(0,0,0,0.13)"/>
+    <rect x="3" y="44" width="34" height="1.5" fill="rgba(0,0,0,0.13)"/>
+    <!-- Left window strip -->
+    <rect x="3.5" y="25" width="7" height="18" rx="3" fill="rgba(255,255,255,0.18)"/>
+    <!-- Right window strip -->
+    <rect x="29.5" y="25" width="7" height="18" rx="3" fill="rgba(255,255,255,0.18)"/>
+    <!-- Rear lights -->
+    <rect x="7" y="51" width="26" height="5" rx="3" fill="rgba(255,180,0,0.45)"/>
+    <!-- Route badge on roof -->
+    <rect x="11" y="26" width="18" height="13" rx="6" fill="rgba(0,0,0,0.45)"/>
+    <text x="20" y="33" font-family="system-ui,-apple-system,'Inter',sans-serif" font-size="8" font-weight="800" fill="#ffffff" text-anchor="middle" dominant-baseline="middle">${route}</text>
+  </svg>`;
+}
+
 function createBusVehicleIcon(route: string, bearing: number) {
   return L.divIcon({
-    className: '',
-    html: `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
-      <div class="bus-vehicle-inner" style="
-        width:38px;height:38px;border-radius:50%;
-        background:${ORANGE};border:2.5px solid rgba(255,255,255,0.25);
-        display:flex;align-items:center;justify-content:center;
-        font-size:18px;cursor:pointer;
-        transform:rotate(${bearing}deg);
-        box-shadow:0 0 20px rgba(249,115,22,0.6),0 2px 10px rgba(0,0,0,0.5);
-        transition:transform 1s ease;
-      ">▲</div>
-      <div style="
-        background:rgba(249,115,22,0.95);color:#fff;
-        padding:1px 7px;border-radius:5px;font-size:10px;font-weight:800;
-        white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.4);
-        border:1px solid rgba(255,255,255,0.2);letter-spacing:0.05em;
-      ">${route}</div>
+    className: 'cs-bus-marker',
+    // Outer div carries the glow-pulse animation; inner div carries the rotation.
+    // Separating them prevents the animation from interfering with position glide.
+    html: `<div class="bus-vehicle-inner">
+      <div style="transform:rotate(${bearing}deg);transform-origin:20px 31px;line-height:0;">
+        ${busSvg(route)}
+      </div>
     </div>`,
-    iconSize: [46, 58],
-    iconAnchor: [23, 19],
-    popupAnchor: [0, -22],
+    iconSize: [40, 62],
+    iconAnchor: [20, 31],   // center of bus body
+    popupAnchor: [0, -32],
   });
 }
 
@@ -322,10 +340,22 @@ function BusStopsLayer({ features }: { features: MobilityFeature[] }) {
 }
 
 function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
+  // react-leaflet calls setIcon (recreating the DOM node) whenever the `icon`
+  // prop changes by reference — which would kill the CSS glide transition.
+  // Cache icons by bus + bearing bucket so the marker element persists across
+  // polls and `.cs-bus-marker { transition: transform }` can animate position.
+  const iconCache = useRef<Map<string, L.DivIcon>>(new Map());
+
   return (
     <>
       {vehicles.map((bus) => {
-        const icon = createBusVehicleIcon(bus.route, bus.bearing);
+        const bucket = Math.round(bus.bearing / 15) * 15;
+        const cacheKey = `${bus.id}:${bucket}`;
+        let icon = iconCache.current.get(cacheKey);
+        if (!icon) {
+          icon = createBusVehicleIcon(bus.route, bucket);
+          iconCache.current.set(cacheKey, icon);
+        }
         return (
           <Marker key={bus.id} position={[bus.lat, bus.lon]} icon={icon}>
             <Popup closeButton>
