@@ -45,6 +45,10 @@ pydantic-settings
 tqdm
 requests
 
+# Geospatial
+pyproj
+shapely
+
 # Development
 pytest
 ruff

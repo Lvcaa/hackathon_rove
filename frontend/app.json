@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "CommuteSync",
+    "slug": "commutesync",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "commutesync",
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

@@ -1,0 +1,38 @@
+<h2>Three architecture approaches</h2>
+<p class="subtitle">How to handle the map across Expo native + web — the main technical split in this project.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Web-first PWA (Recommended)</h3>
+      <p>Expo Router handles all navigation. Map = <strong>react-leaflet</strong> on web (full interactive). On Expo Go native, the map screen uses a WebView that loads the same Leaflet map. Stats cards and sidebar are React Native components on both platforms. Fastest for hackathon — one map implementation, everything else is shared.</p>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul><li>One map codebase</li><li>OpenStreetMap dark tiles work perfectly</li><li>Fast to build</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Native map is a WebView, not truly native gestures</li></ul></div>
+      </div>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Cross-platform conditional maps</h3>
+      <p>Split map component: <strong>react-leaflet</strong> on web, <strong>react-native-maps</strong> with OSM tiles on iOS/Android. All other UI (sidebar, cards, dashboard) shared via Expo Router. Truly native map gestures on phone.</p>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul><li>Native map performance on phone</li><li>Best mobile UX</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Two map implementations to maintain</li><li>react-native-maps needs EAS build (not Expo Go)</li></ul></div>
+      </div>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>MapLibre unified (same engine everywhere)</h3>
+      <p><strong>@maplibre/maplibre-react-native</strong> on native + <strong>maplibre-gl-js</strong> on web. Same map engine, same tile source, same styling language. Most consistent look across platforms.</p>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul><li>Pixel-perfect consistency</li><li>Custom dark vector tiles</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Needs EAS build (not Expo Go)</li><li>More setup time</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>

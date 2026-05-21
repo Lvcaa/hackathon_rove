@@ -1,0 +1,26 @@
+<h2>What does "verify via the Expo app" mean?</h2>
+<p class="subtitle">This shapes the entire frontend architecture — Next.js PWA vs React Native are very different stacks.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Next.js PWA, tested on mobile browser</h3>
+      <p>Next.js web app with mobile-first responsive design + PWA manifest. "Verify via Expo" means opening the URL in your phone browser or scanning a QR code from the Next.js dev server. No React Native involved.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Expo React Native app (separate from Next.js)</h3>
+      <p>Next.js handles the landing/marketing page on web. A separate Expo app is the mobile client. Two distinct apps — shared FastAPI backend. Preview the Expo app via Expo Go on your phone.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Expo Router with web support (unified codebase)</h3>
+      <p>One codebase using Expo + React Native for iOS/Android, plus Expo Web for browser access. No Next.js — the "Next.js feel" comes from Expo Router's file-based routing.</p>
+    </div>
+  </div>
+</div>
