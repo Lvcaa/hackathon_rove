@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import mobility, trips
+from app.routers import mobility
 
 app = FastAPI(title="Hackathon Rove AI")
 
@@ -13,7 +13,6 @@ app.add_middleware(
 )
 
 app.include_router(mobility.router)
-app.include_router(trips.router)
 
 
 @app.get("/")

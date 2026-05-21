@@ -7,7 +7,6 @@ import MapView from '../components/MapView';
 import Sidebar from '../components/Sidebar';
 import BottomSheet from '../components/BottomSheet';
 import StatsCard from '../components/StatsCard';
-import BookingSheet from '../components/BookingSheet';
 
 const ALL: Set<CategoryKey> = new Set(['stations', 'taxi', 'carsharing', 'parking', 'busstops', 'buses']);
 
@@ -63,7 +62,6 @@ export default function MapScreen() {
             onFeatureSelect={handleFeatureSelect}
           />
         )}
-        <BookingSheet />
       </View>
     </View>
   );
