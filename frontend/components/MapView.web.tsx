@@ -18,6 +18,7 @@ interface Props {
   visibleCategories: Set<CategoryKey>;
   selectedFeature: MobilityFeature | null;
   onFeatureSelect: (feature: MobilityFeature, category: CategoryKey) => void;
+  onNavigate?: (feature: MobilityFeature, category: CategoryKey) => void;
 }
 
 const TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
@@ -181,12 +182,22 @@ function getDisplayName(f: MobilityFeature): string {
   return String(p.nome || p.name || p.via || p.zona || p.descrizione || 'Posizione');
 }
 
-function FeaturePopup({ feature, category }: { feature: MobilityFeature; category: CategoryKey }) {
+function FeaturePopup({ feature, category, onNavigate }: {
+  feature: MobilityFeature;
+  category: CategoryKey;
+  onNavigate?: (feature: MobilityFeature, category: CategoryKey) => void;
+}) {
+  const map   = useMap();
   const color = CategoryColors[category];
-  const name = getDisplayName(feature);
+  const name  = getDisplayName(feature);
   const pairs = Object.entries(feature.properties)
     .filter(([k]) => !['nome', 'name', 'zona'].includes(k) && feature.properties[k] !== null)
     .slice(0, 3);
+
+  function handleNavigate() {
+    map.closePopup();
+    onNavigate?.(feature, category);
+  }
 
   return (
     <div style={{ padding: '16px 20px 14px', minWidth: 200 }}>
@@ -209,11 +220,15 @@ function FeaturePopup({ feature, category }: { feature: MobilityFeature; categor
           <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 500 }}>{String(v)}</span>
         </div>
       ))}
-      <div style={{
-        marginTop: 12, background: color + '18', border: `1px solid ${color}44`,
-        borderRadius: 8, padding: '8px 0', textAlign: 'center', cursor: 'pointer',
-        fontSize: 12, fontWeight: 700, color, letterSpacing: '0.02em',
-      }}>
+      <div
+        onClick={handleNavigate}
+        style={{
+          marginTop: 12, background: color + '18', border: `1px solid ${color}44`,
+          borderRadius: 8, padding: '8px 0', textAlign: 'center', cursor: 'pointer',
+          fontSize: 12, fontWeight: 700, color, letterSpacing: '0.02em',
+          userSelect: 'none',
+        }}
+      >
         Naviga →
       </div>
     </div>
@@ -388,10 +403,11 @@ function BusVehiclePopup({ bus }: { bus: BusVehicle }) {
 
 // ── Layer components ───────────────────────────────────────────────────────────
 
-function PointMarkers({ features, category, onSelect }: {
+function PointMarkers({ features, category, onSelect, onNavigate }: {
   features: MobilityFeature[];
   category: CategoryKey;
   onSelect: (f: MobilityFeature, c: CategoryKey) => void;
+  onNavigate?: (f: MobilityFeature, c: CategoryKey) => void;
 }) {
   const icon = createPointIcon(category);
   return (
@@ -402,7 +418,7 @@ function PointMarkers({ features, category, onSelect }: {
           <Marker key={i} position={[coords[1], coords[0]]} icon={icon}
             eventHandlers={{ click: () => onSelect(f, category) }}>
             <Popup closeButton>
-              <FeaturePopup feature={f} category={category} />
+              <FeaturePopup feature={f} category={category} onNavigate={onNavigate} />
             </Popup>
           </Marker>
         );
@@ -411,9 +427,10 @@ function PointMarkers({ features, category, onSelect }: {
   );
 }
 
-function ParkingZones({ features, onSelect }: {
+function ParkingZones({ features, onSelect, onNavigate }: {
   features: MobilityFeature[];
   onSelect: (f: MobilityFeature, c: CategoryKey) => void;
+  onNavigate?: (f: MobilityFeature, c: CategoryKey) => void;
 }) {
   const color = CategoryColors.parking;
   return (
@@ -427,7 +444,7 @@ function ParkingZones({ features, onSelect }: {
             pathOptions={{ fillColor: color, fillOpacity: 0.12, color, weight: 1.5, opacity: 0.6 }}
             eventHandlers={{ click: () => onSelect(f, 'parking') }}>
             <Popup closeButton>
-              <FeaturePopup feature={f} category="parking" />
+              <FeaturePopup feature={f} category="parking" onNavigate={onNavigate} />
             </Popup>
           </Polygon>
         );
@@ -639,7 +656,7 @@ function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export default function MapView({ data, busStops, busVehicles, visibleCategories, selectedFeature, onFeatureSelect }: Props) {
+export default function MapView({ data, busStops, busVehicles, visibleCategories, selectedFeature, onFeatureSelect, onNavigate }: Props) {
   const showUrbanStops = visibleCategories.has('busstops_urban');
   const showExtraStops = visibleCategories.has('busstops_extraurban');
   // Memoised so the array identity is stable across the 3 s bus refreshes —
@@ -661,16 +678,16 @@ export default function MapView({ data, busStops, busVehicles, visibleCategories
         <ZoomControl position="bottomright" />
 
         {visibleCategories.has('stations') && (
-          <PointMarkers features={data.stations.features} category="stations" onSelect={onFeatureSelect} />
+          <PointMarkers features={data.stations.features} category="stations" onSelect={onFeatureSelect} onNavigate={onNavigate} />
         )}
         {visibleCategories.has('taxi') && (
-          <PointMarkers features={data.taxi.features} category="taxi" onSelect={onFeatureSelect} />
+          <PointMarkers features={data.taxi.features} category="taxi" onSelect={onFeatureSelect} onNavigate={onNavigate} />
         )}
         {visibleCategories.has('carsharing') && (
-          <PointMarkers features={data.carsharing.features} category="carsharing" onSelect={onFeatureSelect} />
+          <PointMarkers features={data.carsharing.features} category="carsharing" onSelect={onFeatureSelect} onNavigate={onNavigate} />
         )}
         {visibleCategories.has('parking') && (
-          <ParkingZones features={data.parking.features} onSelect={onFeatureSelect} />
+          <ParkingZones features={data.parking.features} onSelect={onFeatureSelect} onNavigate={onNavigate} />
         )}
         {/* Bus stops live in their own pane above the overlay-pane (z 400) so
             the translucent parking polygons can't intercept stop clicks. */}

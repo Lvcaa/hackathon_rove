@@ -8,6 +8,7 @@ import Sidebar from '../components/Sidebar';
 import BottomSheet from '../components/BottomSheet';
 import StatsCard from '../components/StatsCard';
 import LayerTogglePanel from '../components/LayerTogglePanel';
+import BookingSheet from '../components/BookingSheet';
 
 const ALL: Set<CategoryKey> = new Set([
   'stations', 'taxi', 'carsharing', 'parking',
@@ -24,6 +25,7 @@ export default function MapScreen() {
     feature: MobilityFeature;
     category: CategoryKey;
   } | null>(null);
+  const [bookingTrigger, setBookingTrigger] = useState<{ destination: string; nonce: number } | null>(null);
 
   const handleToggleCategory = useCallback((cat: CategoryKey) => {
     setVisibleCategories((prev) => {
@@ -35,6 +37,12 @@ export default function MapScreen() {
 
   const handleFeatureSelect = useCallback((feature: MobilityFeature, category: CategoryKey) => {
     setSelectedFeature({ feature, category });
+  }, []);
+
+  const handleNavigate = useCallback((feature: MobilityFeature, category: CategoryKey) => {
+    const p    = feature.properties;
+    const dest = String(p.descrizione || p.zona || p.nome || p.name || p.via || category);
+    setBookingTrigger((prev) => ({ destination: dest, nonce: (prev?.nonce ?? 0) + 1 }));
   }, []);
 
   return (
@@ -56,6 +64,7 @@ export default function MapScreen() {
           visibleCategories={visibleCategories}
           selectedFeature={selectedFeature?.feature ?? null}
           onFeatureSelect={handleFeatureSelect}
+          onNavigate={handleNavigate}
         />
         <StatsCard stats={stats} />
         <LayerTogglePanel visible={visibleCategories} onToggle={handleToggleCategory} />
@@ -67,6 +76,7 @@ export default function MapScreen() {
             onFeatureSelect={handleFeatureSelect}
           />
         )}
+        <BookingSheet searchTrigger={bookingTrigger} />
       </View>
     </View>
   );
