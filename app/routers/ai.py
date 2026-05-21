@@ -29,7 +29,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from rapidfuzz import fuzz, process, utils
 
-from app import trains
 from app.geo import haversine_m
 from app.routers import routing
 from app.routers.routing import LatLng
@@ -353,102 +352,31 @@ def _resolve_destination(name: str) -> dict[str, Any]:
             "name": lm["name"], "category": lm["category"],
         }
 
-    # 2. Fuzzy match against the city's full mobility catalogue.
+    # 2. The city catalogue, then the address geocoder — so any street or
+    #    landmark in the Trento–Rovereto region can be reached, not just the
+    #    named mobility resources.
+    place = routing.resolve_place(query)
+    if place is not None:
+        return place
+
+    # 3. Nothing matched anywhere — offer the closest catalogue names to retry.
     places = routing._PLACES
-    if not places:
-        raise _err(503, "Il catalogo delle destinazioni non è ancora pronto. Riprova tra poco.")
-
-    # A confident wrong match is worse than a helpful "did you mean" — keep the
-    # cutoff high so vague / unknown places fall through to the suggestion list.
-    choices = {i: p["name"] for i, p in enumerate(places)}
-    match = process.extractOne(
-        query, choices, scorer=fuzz.WRatio,
-        processor=utils.default_process, score_cutoff=84,
-    )
-    if match is not None:
-        p = places[match[2]]
-        return {
-            "lat":      p["lat"],
-            "lng":      p["lng"],
-            "name":     p["name"],
-            "category": p["category"],
-        }
-
-    # No confident match — offer the closest names so the user can retry.
-    near = process.extract(
-        query, choices, scorer=fuzz.WRatio,
-        processor=utils.default_process, limit=4,
-    )
     seen: list[str] = []
-    for _, _, idx in near:
-        label = places[idx]["name"]
-        if label not in seen:
-            seen.append(label)
+    if places:
+        choices = {i: p["name"] for i, p in enumerate(places)}
+        near = process.extract(
+            query, choices, scorer=fuzz.WRatio,
+            processor=utils.default_process, limit=4,
+        )
+        for _, _, idx in near:
+            label = places[idx]["name"]
+            if label not in seen:
+                seen.append(label)
     raise _err(
         422,
         f'Non ho trovato "{name}" tra le destinazioni di Trento e Rovereto.',
         did_you_mean=seen,
     )
-
-
-def _train_suggestion(
-    origin_pt: dict[str, Any], dest: dict[str, Any]
-) -> dict[str, Any] | None:
-    """Build a walk → train → walk itinerary, or None if no train would help."""
-    leg = trains.plan_train_leg(
-        origin_pt["lat"], origin_pt["lng"], dest["lat"], dest["lng"]
-    )
-    if leg is None:
-        return None
-
-    o_st, d_st = leg["origin_station"], leg["dest_station"]
-    walk_to = routing._leg(
-        "walk", origin_pt, o_st,
-        label_from=origin_pt["name"], label_to=o_st["name"],
-    )
-    train_leg = {
-        "mode":         "train",
-        "from":         {"name": o_st["name"], "lat": o_st["lat"], "lng": o_st["lng"]},
-        "to":           {"name": d_st["name"], "lat": d_st["lat"], "lng": d_st["lng"]},
-        "distance_m":   leg["distance_m"],
-        "duration_min": leg["duration_min"],
-        "polyline":     leg["polyline"],
-    }
-    walk_from = routing._leg(
-        "walk", d_st, dest,
-        label_from=d_st["name"], label_to=dest["name"],
-    )
-    legs = [walk_to, train_leg, walk_from]
-
-    suggestion = routing._suggestion(
-        "train", "Treno", "🚆",
-        f"Treno da {o_st['name']} a {d_st['name']}",
-        legs, leg["fare_eur"],
-    )
-    # Upgrade the walking legs to real pavement geometry, then recompute totals.
-    routing._enrich_walk_legs([suggestion])
-    suggestion["total_distance_m"] = sum(l["distance_m"] for l in suggestion["legs"])
-    suggestion["total_duration_min"] = round(
-        sum(l["duration_min"] for l in suggestion["legs"]), 1
-    )
-    return suggestion
-
-
-def _with_train_option(
-    suggestions: list[dict[str, Any]], origin_pt: dict[str, Any], dest: dict[str, Any]
-) -> list[dict[str, Any]]:
-    """Append a train itinerary when one is available and re-rank the list."""
-    train = _train_suggestion(origin_pt, dest)
-    if train is None:
-        return suggestions
-
-    merged = suggestions + [train]
-    merged.sort(key=lambda s: s["total_duration_min"])
-    cheapest = min(merged, key=lambda s: s["cost_eur"])
-    for i, s in enumerate(merged):
-        s["recommended"] = i == 0
-        s["cheapest"] = s is cheapest
-    return merged
 
 
 def _pick_suggestion(suggestions: list[dict[str, Any]], mode: str) -> dict[str, Any]:
@@ -515,9 +443,6 @@ def ai_plan(payload: AIPlanRequest) -> dict[str, Any]:
     suggestions = routing._build_suggestions(origin_pt, dest)
     if not suggestions:
         raise _err(422, f"Non ci sono itinerari disponibili verso {dest['name']}.")
-
-    # Add the regional train as an option whenever the rail network helps.
-    suggestions = _with_train_option(suggestions, origin_pt, dest)
 
     chosen = _pick_suggestion(suggestions, intent["mode"])
 

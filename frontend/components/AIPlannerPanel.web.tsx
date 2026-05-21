@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { RouteSuggestion, MODE_META } from '../types/routing';
 import { useAIPlanner } from '../hooks/useAIPlanner';
 import { AI_PROMPT_PRESETS } from '../constants/aiPresets';
+import ModeChips from './ModeChips';
 
 const FONT = "'Inter', 'SF Pro Display', system-ui, sans-serif";
 const C = {
@@ -141,13 +142,24 @@ export default function AIPlannerPanel({ origin, onPlanReady, onClear, onRequest
   );
   const inputRef = useRef<HTMLInputElement>(null);
   const { state, plan, reset } = useAIPlanner();
+  // Which itinerary the user is looking at — defaults to the planner's pick,
+  // but the mode chips let them switch to any other suggestion.
+  const [selId, setSelId] = useState<string | null>(null);
 
   useEffect(() => { injectStyles(); }, []);
 
-  // Hand the chosen itinerary to the map once a plan is ready.
+  const suggestions = state.result?.suggestions ?? [];
+  const activeId =
+    selId && suggestions.some((s) => s.id === selId)
+      ? selId
+      : state.result?.chosen_id ?? null;
+  const selected: RouteSuggestion | null =
+    suggestions.find((s) => s.id === activeId) ?? state.chosen;
+
+  // Hand the itinerary currently in view to the map.
   useEffect(() => {
-    if (state.phase === 'ready' && state.chosen) onPlanReady(state.chosen);
-  }, [state.phase, state.chosen, onPlanReady]);
+    if (state.phase === 'ready' && selected) onPlanReady(selected);
+  }, [state.phase, selected, onPlanReady]);
 
   // The placeholder cycles through example prompts only while the field is
   // idle, empty and unfocused — clicking in to type pauses it immediately.
@@ -164,11 +176,13 @@ export default function AIPlannerPanel({ origin, onPlanReady, onClear, onRequest
     const trimmed = text.trim();
     if (!trimmed || state.phase === 'thinking') return;
     if (!origin) onRequestLocation?.();
+    setSelId(null);
     plan(trimmed, origin);
   };
 
   const handleReset = () => {
     setInput('');
+    setSelId(null);
     reset();
     onClear();
   };
@@ -207,7 +221,7 @@ export default function AIPlannerPanel({ origin, onPlanReady, onClear, onRequest
         <div style={{ display: 'flex', alignItems: 'stretch' }}>
           {/* Left: badge + transparent input */}
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 11, padding: '14px 0 14px 14px' }}>
-            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0 }}>
+            <svg width="18" height="36" viewBox="0 0 15 15" fill="none" preserveAspectRatio="xMidYMid meet" style={{ flexShrink: 0 }}>
               <path d="M7.5 1.5L8.75 6.25L13.5 7.5L8.75 8.75L7.5 13.5L6.25 8.75L1.5 7.5L6.25 6.25Z" fill="#00e5ff"/>
             </svg>
             <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
@@ -320,7 +334,7 @@ export default function AIPlannerPanel({ origin, onPlanReady, onClear, onRequest
       )}
 
       {/* Ready — the plan */}
-      {state.phase === 'ready' && state.result && state.chosen && (
+      {state.phase === 'ready' && state.result && selected && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <div style={{
             fontSize: 12.5, color: C.text, fontWeight: 600, lineHeight: 1.45,
@@ -328,15 +342,27 @@ export default function AIPlannerPanel({ origin, onPlanReady, onClear, onRequest
             {state.result.ai_summary}
           </div>
 
+          {/* Mode chips — switch between the itineraries the planner found */}
+          {suggestions.length > 1 && (
+            <div style={{ marginTop: 9 }}>
+              <ModeChips
+                suggestions={suggestions}
+                selectedId={activeId}
+                onSelect={setSelId}
+                accent={C.cyan}
+              />
+            </div>
+          )}
+
           <div style={{
             marginTop: 9, background: C.surface, borderRadius: 11,
             border: `1px solid ${C.green}33`, padding: '10px 11px',
           }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
               <span style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>
-                {state.chosen.icon} {state.chosen.label}
+                {selected.icon} {selected.label}
               </span>
-              {state.chosen.recommended && (
+              {selected.recommended && (
                 <span style={{
                   fontSize: 8.5, fontWeight: 800, color: C.green,
                   border: `1px solid ${C.green}66`, borderRadius: 5, padding: '1px 5px',
@@ -344,13 +370,13 @@ export default function AIPlannerPanel({ origin, onPlanReady, onClear, onRequest
                 }}>consigliato</span>
               )}
               <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 800, color: C.cyan }}>
-                {Math.round(state.chosen.total_duration_min)} min
+                {Math.round(selected.total_duration_min)} min
               </span>
               <span style={{ fontSize: 11.5, fontWeight: 700, color: C.amber }}>
-                {fmtCost(state.chosen.cost_eur)}
+                {fmtCost(selected.cost_eur)}
               </span>
             </div>
-            <PlanLegs suggestion={state.chosen} />
+            <PlanLegs suggestion={selected} />
           </div>
 
           <p style={{ fontSize: 10, color: C.muted, margin: '8px 2px 0' }}>

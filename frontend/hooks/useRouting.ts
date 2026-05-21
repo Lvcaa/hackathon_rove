@@ -6,12 +6,13 @@ const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
 export type RoutingStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 interface Origin { lat: number; lng: number; }
-interface Destination { name: string; lat: number; lng: number; }
+interface Destination { name: string; lat?: number; lng?: number; }
 
 /**
  * Fetches ranked multimodal itineraries from POST /api/routing/suggest.
- * The destination is sent both as a name and as explicit coordinates, so
- * the backend skips its fuzzy lookup and routes to the exact point.
+ * When the destination carries coordinates they are sent so the backend
+ * routes to the exact point; otherwise only the name is sent and the backend
+ * resolves it (catalogue match, then address geocoding).
  */
 export function useRouting() {
   const [status, setStatus] = useState<RoutingStatus>('idle');
@@ -34,7 +35,10 @@ export function useRouting() {
         body: JSON.stringify({
           origin: { lat: origin.lat, lng: origin.lng },
           destination: destination.name,
-          destination_coords: { lat: destination.lat, lng: destination.lng },
+          destination_coords:
+            destination.lat != null && destination.lng != null
+              ? { lat: destination.lat, lng: destination.lng }
+              : null,
         }),
         signal: ctrl.signal,
       });

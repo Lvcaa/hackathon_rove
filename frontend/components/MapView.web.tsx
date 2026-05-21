@@ -1442,6 +1442,18 @@ function LiveTrainLayer({ trains }: { trains: TrainVehicle[] }) {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
+function MapResizer() {
+  const map = useMap();
+  useEffect(() => {
+    map.invalidateSize();
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [map]);
+  return null;
+}
+
 export default function MapView({
   data, busStops, busVehicles, trainStations, rail, trainVehicles,
   visibleCategories, selectedFeature,
@@ -1467,6 +1479,7 @@ export default function MapView({
   return (
     <View style={styles.container}>
       <MapContainer center={CENTER} zoom={14} style={{ width: '100%', height: '100%' }} zoomControl={false}>
+        <MapResizer />
         <StylesInjector />
         <TileLayer url={TILE_URL} attribution={TILE_ATTR} />
         <ZoomControl

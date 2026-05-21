@@ -17,10 +17,10 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from rapidfuzz import fuzz, process
+from rapidfuzz import fuzz, process, utils
 
-from app import osrm
-from app.database import get_db
+from app import osrm, trains
+from app.geocode import geocode
 from app.geo import haversine_m
 from app.routers import mobility, transit
 
@@ -200,6 +200,33 @@ def _fmt_dist(metres: float) -> str:
     return f"{metres / 1000:.1f} km" if metres >= 1000 else f"{round(metres)} m"
 
 
+def resolve_place(query: str) -> dict[str, Any] | None:
+    """Resolve a free-text place to ``{lat, lng, name, category}``.
+
+    The city's named mobility resources are matched first (a tight fuzzy cutoff
+    so only a near-exact name wins); anything else is handed to the address
+    geocoder, so the user can route to any street or landmark in the region.
+    """
+    q = (query or "").strip()
+    if len(q) < 2:
+        return None
+
+    if _PLACES:
+        choices = {i: p["name"] for i, p in enumerate(_PLACES)}
+        match = process.extractOne(
+            q, choices, scorer=fuzz.WRatio,
+            processor=utils.default_process, score_cutoff=88,
+        )
+        if match is not None:
+            p = _PLACES[match[2]]
+            return {
+                "lat": p["lat"], "lng": p["lng"],
+                "name": p["name"], "category": p["category"],
+            }
+
+    return geocode(q)
+
+
 def _resolve_destination(payload: RoutePayload) -> dict[str, Any]:
     """Turn the payload's destination into concrete {lat, lng, name}."""
     if payload.destination_coords is not None:
@@ -207,21 +234,13 @@ def _resolve_destination(payload: RoutePayload) -> dict[str, Any]:
             "lat":  payload.destination_coords.lat,
             "lng":  payload.destination_coords.lng,
             "name": payload.destination or "Destinazione",
+            "category": "address",
         }
 
     if payload.destination:
-        with get_db() as conn:
-            rows = conn.execute(
-                "SELECT name, lat, lng FROM destinations WHERE lat IS NOT NULL"
-            ).fetchall()
-        if rows:
-            choices = {i: r["name"] for i, r in enumerate(rows)}
-            match = process.extractOne(
-                payload.destination, choices, scorer=fuzz.WRatio, score_cutoff=60
-            )
-            if match is not None:
-                r = rows[match[2]]
-                return {"lat": r["lat"], "lng": r["lng"], "name": r["name"]}
+        place = resolve_place(payload.destination)
+        if place is not None:
+            return place
 
     raise HTTPException(status_code=404, detail="Destinazione non trovata")
 
@@ -304,6 +323,67 @@ def _enrich_walk_legs(suggestions: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _train_leg(o_st: dict[str, Any], d_st: dict[str, Any], leg: dict[str, Any],
+               extra_min: float = 0.0) -> dict[str, Any]:
+    """A single train segment between two stations, in route-leg shape."""
+    return {
+        "mode":         "train",
+        "from":         {"name": o_st["name"], "lat": o_st["lat"], "lng": o_st["lng"]},
+        "to":           {"name": d_st["name"], "lat": d_st["lat"], "lng": d_st["lng"]},
+        "distance_m":   leg["distance_m"],
+        "duration_min": round(leg["duration_min"] + extra_min, 1),
+        "polyline":     leg["polyline"],
+    }
+
+
+def _build_train(origin: dict[str, Any], dest: dict[str, Any]) -> dict[str, Any] | None:
+    """Walk → regional train → walk, or None when no line serves the trip."""
+    leg = trains.plan_train_leg(origin["lat"], origin["lng"], dest["lat"], dest["lng"])
+    if leg is None:
+        return None
+    o_st, d_st = leg["origin_station"], leg["dest_station"]
+    here = "La tua posizione"
+    legs = [
+        _leg("walk", origin, o_st, label_from=here, label_to=o_st["name"]),
+        _train_leg(o_st, d_st, leg),
+        _leg("walk", d_st, dest, label_from=d_st["name"], label_to=dest["name"]),
+    ]
+    return _suggestion(
+        "train", "Treno", "🚆",
+        f"Treno da {o_st['name']} a {d_st['name']}",
+        legs, leg["fare_eur"],
+    )
+
+
+def _build_park_ride(origin: dict[str, Any], dest: dict[str, Any]) -> dict[str, Any] | None:
+    """Drive → park at a station → train → walk: the flagship park-and-ride trip.
+
+    The car is left at the parking lot nearest the boarding station, so the
+    congested city centre is reached by rail instead of by car.
+    """
+    leg = trains.plan_train_leg(origin["lat"], origin["lng"], dest["lat"], dest["lng"])
+    if leg is None:
+        return None
+    o_st, d_st = leg["origin_station"], leg["dest_station"]
+    park = _nearest(o_st, _PARKING)
+    if park is None:
+        return None
+    here = "La tua posizione"
+    legs = [
+        _leg("drive", origin, park, label_from=f"{here} (auto)",
+             label_to=park["name"], overhead_min=1.0),
+        _leg("walk", park, o_st, label_from=park["name"], label_to=o_st["name"]),
+        # +3 min for parking the car and reaching the platform.
+        _train_leg(o_st, d_st, leg, extra_min=3.0),
+        _leg("walk", d_st, dest, label_from=d_st["name"], label_to=dest["name"]),
+    ]
+    return _suggestion(
+        "park_ride", "Park & Ride", "🅿️🚆",
+        f"Parcheggia a {park['name']}, poi treno da {o_st['name']}",
+        legs, 2.00 + leg["fare_eur"],
+    )
+
+
 def _build_suggestions(origin: dict[str, Any], dest: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     here = "La tua posizione"
@@ -371,6 +451,17 @@ def _build_suggestions(origin: dict[str, Any], dest: dict[str, Any]) -> list[dic
         [taxi], 3.50 + taxi["distance_m"] / 1000 * 1.30,
     ))
 
+    # 6. Train — walk to the line, ride, walk off, whenever rail serves the trip.
+    train = _build_train(origin, dest)
+    if train is not None:
+        out.append(train)
+
+    # 7. Park & Ride — drive, park at the station, finish by train. The product's
+    #    flagship: it is what turns station parking into a through-trip.
+    park_ride = _build_park_ride(origin, dest)
+    if park_ride is not None:
+        out.append(park_ride)
+
     # Upgrade walking legs to real pavement geometry, then recompute totals so
     # the ranking reflects the (slightly longer) on-street distances.
     _enrich_walk_legs(out)
@@ -380,8 +471,12 @@ def _build_suggestions(origin: dict[str, Any], dest: dict[str, Any]) -> list[dic
             sum(leg["duration_min"] for leg in s["legs"]), 1
         )
 
-    # Rank by total travel time; flag the fastest and the cheapest.
+    # Rank by total travel time, then surface Park & Ride first when available —
+    # it is the itinerary the system is built to recommend.
     out.sort(key=lambda s: s["total_duration_min"])
+    if park_ride is not None and park_ride in out:
+        out.remove(park_ride)
+        out.insert(0, park_ride)
     cheapest = min(out, key=lambda s: s["cost_eur"])
     for i, s in enumerate(out):
         s["recommended"] = i == 0

@@ -39,7 +39,8 @@ export interface RouteResponse {
 
 // ── Destination search — mirrors GET /api/routing/search ─────────────────────
 
-export type PlaceCategory = 'busstop' | 'station' | 'parking' | 'carsharing' | 'taxi';
+export type PlaceCategory =
+  | 'busstop' | 'station' | 'parking' | 'carsharing' | 'taxi' | 'address' | 'poi';
 
 export interface PlaceResult {
   name: string;
@@ -56,6 +57,8 @@ export const PLACE_ICON: Record<PlaceCategory, string> = {
   parking:    '🅿️',
   carsharing: '🚗',
   taxi:       '🚕',
+  address:    '📍',
+  poi:        '📍',
 };
 
 // Per-mode display tokens, shared by the routing panel and the map route layer.

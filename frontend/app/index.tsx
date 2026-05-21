@@ -130,6 +130,6 @@ export default function MapScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, flexDirection: 'row', backgroundColor: Colors.bg },
-  mapWrapper: { flex: 1, position: 'relative' },
+  container: { flex: 1, flexDirection: 'row', backgroundColor: Colors.bg, height: '100%' },
+  mapWrapper: { flex: 1, position: 'relative', height: '100%' },
 });

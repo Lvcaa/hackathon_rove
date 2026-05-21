@@ -105,6 +105,12 @@ def _offset_iso(minutes: int) -> str:
 
 
 def _resolve_dest(raw: str) -> dict[str, Any]:
+    """Logistics (track, platform, route) for a destination.
+
+    Known stations carry their own data; any other address rides the default
+    station hub — the boarding pass keeps the real destination name via the
+    option's ``display`` field, set at search time.
+    """
     return _DESTINATIONS.get(raw.strip().lower()) or _DESTINATIONS[_DEFAULT_DEST_KEY]
 
 
@@ -126,6 +132,7 @@ def _new_option(
     modality: str,
     expires_at: str,
     zone_id: str | None = None,
+    display: str | None = None,
 ) -> str:
     oid = str(uuid.uuid4())
     _OPTIONS[oid] = {
@@ -134,6 +141,7 @@ def _new_option(
         "dest_key":   dest_key,
         "expires_at": expires_at,
         "zone_id":    zone_id,
+        "display":    display,
     }
     return oid
 
@@ -158,6 +166,9 @@ def _nearest_parking_zone(dest_lng: float, dest_lat: float) -> dict | None:
 def _run_search_logic(destination: str) -> dict[str, Any]:
     dest     = _resolve_dest(destination)
     dest_key = destination.strip().lower()
+    # Preserve the destination the user actually typed for the boarding pass —
+    # known stations keep their canonical name, any other address keeps its own.
+    display  = dest["display"] if dest_key in _DESTINATIONS else (destination.strip() or dest["display"])
     now      = _now_utc()
     expires_at = _iso(now + timedelta(minutes=10))
 
@@ -180,10 +191,10 @@ def _run_search_logic(destination: str) -> dict[str, Any]:
             park_total   = _RESOURCES["parking_stazione"]["total"]
             park_zone_id = None
 
-        train_oid = _new_option(dest_key, "train",        expires_at)
-        park_oid  = _new_option(dest_key, "parking",      expires_at, zone_id=park_zone_id)
-        taxi_oid  = _new_option(dest_key, "taxi",         expires_at)
-        bike_oid  = _new_option(dest_key, "bike_sharing", expires_at)
+        train_oid = _new_option(dest_key, "train",        expires_at, display=display)
+        park_oid  = _new_option(dest_key, "parking",      expires_at, zone_id=park_zone_id, display=display)
+        taxi_oid  = _new_option(dest_key, "taxi",         expires_at, display=display)
+        bike_oid  = _new_option(dest_key, "bike_sharing", expires_at, display=display)
 
     modalities: list[dict[str, Any]] = [
         {
@@ -231,7 +242,7 @@ def _run_search_logic(destination: str) -> dict[str, Any]:
     ]
 
     return {
-        "destination":        dest["display"],
+        "destination":        display,
         "destination_coords": dest["coords"],
         "route_waypoints":    dest["route_waypoints"],
         "modalities":         modalities,
@@ -278,6 +289,7 @@ def _run_book_logic(option_id: str) -> dict[str, Any]:
             )
 
     dest       = _resolve_dest(option["dest_key"])
+    display    = option.get("display") or dest["display"]
     booking_id = f"CS-{str(uuid.uuid4())[:8].upper()}"
     now_iso    = _iso(_now_utc())
 
@@ -349,7 +361,7 @@ def _run_book_logic(option_id: str) -> dict[str, Any]:
     with get_db() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO trips (id, destination_name, parking_id, status, created_at) VALUES (?,?,?,?,?)",
-            (booking_id, dest["display"], zone_id if modality == "parking" else None, "confirmed", now_iso),
+            (booking_id, display, zone_id if modality == "parking" else None, "confirmed", now_iso),
         )
         for i, line in enumerate(detail_lines):
             conn.execute(
@@ -372,7 +384,7 @@ def _run_book_logic(option_id: str) -> dict[str, Any]:
             "title":              title,
             "subtitle":           subtitle,
             "origin":             "Trento",
-            "destination":        dest["display"],
+            "destination":        display,
             "detail_lines":       detail_lines,
             "route_waypoints":    dest["route_waypoints"],
             "destination_coords": dest["coords"],
