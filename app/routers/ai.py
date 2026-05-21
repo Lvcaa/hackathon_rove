@@ -51,7 +51,13 @@ def _strip_markdown(text: str) -> str:
 
 
 def _extract_text(data: dict[str, Any]) -> str:
-    """Pull the assistant text out of LM Studio REST API v1 response."""
+    """Pull the assistant text out of LM Studio REST API v1 response.
+    Format: {"output": [{"type": "message", "content": "..."}], ...}
+    """
+    output = data.get("output", [])
+    if output and isinstance(output[0], dict):
+        return output[0].get("content", "") or ""
+    # OpenAI-compatible fallback
     choices = data.get("choices", [])
     if choices:
         return choices[0].get("message", {}).get("content", "") or ""
