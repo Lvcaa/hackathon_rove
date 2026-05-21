@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse
 
 from app.auth import verify_admin
 from app.database import get_db
-from app.models import SetCapacityRequest
+from app.models import DestinationRequest, SetCapacityRequest
 from app.routers.mobility import get_stats
 
 _DISTRESS_THRESHOLD = 0.2
@@ -188,3 +188,66 @@ def dashboard(_username: str = Depends(verify_admin)) -> dict:
             "full": full,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Destinations / Places of Interest CRUD
+# ---------------------------------------------------------------------------
+
+import uuid as _uuid
+
+
+@router.get("/destinations")
+def list_destinations(_username: str = Depends(verify_admin)) -> dict:
+    """List all destinations / places of interest."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, type, lat, lng FROM destinations ORDER BY name"
+        ).fetchall()
+    return {"destinations": [dict(r) for r in rows]}
+
+
+@router.post("/destinations", status_code=201)
+def create_destination(
+    body: DestinationRequest,
+    _username: str = Depends(verify_admin),
+) -> dict:
+    """Add a new destination / place of interest."""
+    new_id = f"D{str(_uuid.uuid4())[:8].upper()}"
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO destinations (id, name, type, lat, lng) VALUES (?,?,?,?,?)",
+            (new_id, body.name.strip(), body.type.strip(), body.lat, body.lng),
+        )
+    return {"id": new_id, "name": body.name, "type": body.type, "lat": body.lat, "lng": body.lng}
+
+
+@router.put("/destinations/{dest_id}")
+def update_destination(
+    dest_id: str,
+    body: DestinationRequest,
+    _username: str = Depends(verify_admin),
+) -> dict:
+    """Update an existing destination."""
+    with get_db() as conn:
+        row = conn.execute("SELECT id FROM destinations WHERE id = ?", (dest_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Destination not found")
+        conn.execute(
+            "UPDATE destinations SET name=?, type=?, lat=?, lng=? WHERE id=?",
+            (body.name.strip(), body.type.strip(), body.lat, body.lng, dest_id),
+        )
+    return {"id": dest_id, "name": body.name, "type": body.type, "lat": body.lat, "lng": body.lng}
+
+
+@router.delete("/destinations/{dest_id}", status_code=204)
+def delete_destination(
+    dest_id: str,
+    _username: str = Depends(verify_admin),
+) -> None:
+    """Delete a destination."""
+    with get_db() as conn:
+        row = conn.execute("SELECT id FROM destinations WHERE id = ?", (dest_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Destination not found")
+        conn.execute("DELETE FROM destinations WHERE id = ?", (dest_id,))

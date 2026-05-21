@@ -22,3 +22,10 @@ class SetCapacityRequest(BaseModel):
 
 class SensorUpdateRequest(BaseModel):
     available_spots: int
+
+
+class DestinationRequest(BaseModel):
+    name: str
+    type: str = "station"
+    lat: float
+    lng: float
