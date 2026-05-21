@@ -50,6 +50,20 @@ interface Destination {
   lng: number;
 }
 
+interface ParkingZone {
+  id: string;
+  name: string;
+  max_capacity: number;
+  available_spots: number;
+  occupancy_pct: number;
+  distress: boolean;
+}
+
+interface DashboardData {
+  zones: ParkingZone[];
+  summary: { total_zones: number; configured_zones: number; distressed: number; full: number };
+}
+
 const EMPTY_FORM = { name: '', type: 'station', lat: '', lng: '' };
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -96,10 +110,18 @@ function TypeBadge({ type }: { type: string }) {
 export default function DashboardScreen() {
   const { stats } = useMobilityData();
   const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [parking, setParking] = useState<DashboardData | null>(null);
   const [form, setForm] = useState<typeof EMPTY_FORM>(EMPTY_FORM);
   const [editId, setEditId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    adminFetch('/admin/dashboard')
+      .then((r) => r.json())
+      .then((d) => setParking(d))
+      .catch(() => {});
+  }, []);
 
   const loadDestinations = useCallback(() => {
     adminFetch('/admin/destinations')
@@ -175,6 +197,72 @@ export default function DashboardScreen() {
           <StatCard key={c.key} label={c.label} icon={c.icon} color={c.color} value={stats[c.key]} />
         ))}
       </div>
+
+      {/* Parking occupancy */}
+      {parking && (
+        <div style={{
+          background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16,
+          overflow: 'hidden', marginBottom: 20,
+        }}>
+          <div style={{
+            padding: '18px 24px', borderBottom: `1px solid ${C.border}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Occupazione parcheggi</h2>
+              <p style={{ margin: '2px 0 0', fontSize: 12, color: C.muted }}>
+                {parking.summary.configured_zones}/{parking.summary.total_zones} zone configurate
+                {parking.summary.distressed > 0 && (
+                  <span style={{ color: C.red, marginLeft: 10 }}>⚠ {parking.summary.distressed} in sofferenza</span>
+                )}
+                {parking.summary.full > 0 && (
+                  <span style={{ color: C.red, marginLeft: 10 }}>⛔ {parking.summary.full} al completo</span>
+                )}
+              </p>
+            </div>
+          </div>
+          <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {parking.zones.map((z) => {
+              const configured = z.max_capacity > 0;
+              const pct   = z.occupancy_pct;
+              const color = !configured ? 'rgba(255,255,255,0.18)'
+                          : z.distress  ? C.red
+                          : pct > 60    ? C.yellow
+                          : C.green;
+              return (
+                <div key={z.id}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                      {z.distress && <span style={{ color: C.red, fontSize: 12 }}>⚠</span>}
+                      <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{z.name}</span>
+                      <span style={{
+                        fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+                        color: configured ? color : 'rgba(255,255,255,0.25)',
+                        background: (configured ? color : 'rgba(255,255,255,0.1)') + '18',
+                        border: `1px solid ${(configured ? color : 'rgba(255,255,255,0.15)')}`,
+                        borderRadius: 5, padding: '1px 6px',
+                      }}>
+                        {configured ? `${z.available_spots}/${z.max_capacity} liberi` : 'non configurata'}
+                      </span>
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: configured ? color : 'rgba(255,255,255,0.2)' }}>
+                      {configured ? `${pct}%` : '—'}
+                    </span>
+                  </div>
+                  <div style={{ height: 5, borderRadius: 5, background: 'rgba(255,255,255,0.07)' }}>
+                    <div style={{
+                      height: '100%', borderRadius: 5,
+                      width: configured ? `${pct}%` : '0%',
+                      background: color,
+                      transition: 'width 0.7s cubic-bezier(0.16,1,0.3,1)',
+                    }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Destinations section */}
       <div style={{
