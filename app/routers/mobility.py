@@ -247,10 +247,22 @@ def get_stats() -> dict:
 _busstops_cache: dict = {}
 _busstops_cache_time: float = 0.0
 _OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Bus stops are mapped in OSM under several tagging schemes. The legacy
+# `highway=bus_stop` scheme misses many stops mapped with the modern
+# `public_transport` schema (platforms drawn as nodes or ways, plus
+# stop_position nodes). Union all of them for full coverage.
+# The bbox spans the whole Trento comune — from Mattarello in the south to
+# Gardolo/Meano in the north — so outlying districts aren't cut off.
+_BBOX = "45.98,11.03,46.18,11.24"
 _OVERPASS_QUERY = (
-    '[out:json][timeout:25];'
-    'node["highway"="bus_stop"](46.02,11.07,46.13,11.22);'
-    'out body;'
+    "[out:json][timeout:60];"
+    "("
+    f'node["highway"="bus_stop"]({_BBOX});'
+    f'node["public_transport"="platform"]["bus"!="no"]({_BBOX});'
+    f'way["public_transport"="platform"]["bus"!="no"]({_BBOX});'
+    f'node["public_transport"="stop_position"]["bus"="yes"]({_BBOX});'
+    ");"
+    "out body center;"
 )
 
 
@@ -263,7 +275,7 @@ def _fetch_bus_stops() -> dict:
         _OVERPASS_URL,
         data={"data": _OVERPASS_QUERY},
         headers={"User-Agent": "CommuteSync Hackathon/1.0"},
-        timeout=30,
+        timeout=70,
     )
     resp.raise_for_status()
     raw = resp.json()
@@ -272,8 +284,13 @@ def _fetch_bus_stops() -> dict:
     for el in raw.get("elements", []):
         lat, lon = el.get("lat"), el.get("lon")
         if lat is None or lon is None:
+            # Ways have no direct lat/lon — Overpass returns their centroid.
+            center = el.get("center") or {}
+            lat, lon = center.get("lat"), center.get("lon")
+        if lat is None or lon is None:
             continue
-        key = f"{round(lat, 5)},{round(lon, 5)}"
+        # Merge a platform + stop_position mapped at the same physical stop.
+        key = f"{round(lat, 4)},{round(lon, 4)}"
         if key in seen:
             continue
         seen.add(key)

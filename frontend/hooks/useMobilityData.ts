@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { MobilityData, Stats, BusVehicle, MobilityCollection } from '../types/mobility';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
-const BUS_REFRESH_MS = 15_000;
+const BUS_REFRESH_MS = 3_000;
 
 // ── Mock data (Trento coordinates from CSV files) ───────────────────────────
 
@@ -135,7 +135,7 @@ export function useMobilityData() {
   useEffect(() => {
     async function fetchBusStops() {
       try {
-        const res = await fetch(`${API_BASE}/api/busstops`, { signal: AbortSignal.timeout(35000) });
+        const res = await fetch(`${API_BASE}/api/busstops`, { signal: AbortSignal.timeout(75000) });
         if (!res.ok) return;
         const col: MobilityCollection = await res.json();
         if (col.features.length > 0) {
