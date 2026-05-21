@@ -89,12 +89,31 @@ function injectStyles() {
       font-size:9px !important; border-radius:6px 0 0 0 !important;
     }
     .leaflet-control-attribution a { color:rgba(255,255,255,0.4) !important; }
-    .leaflet-control-zoom a {
-      background:rgba(17,17,17,0.9) !important; color:rgba(255,255,255,0.7) !important;
-      border-color:rgba(255,255,255,0.1) !important;
+
+    /* Zoom control: dissolve the bar into two individual glass pills */
+    .leaflet-control-zoom.leaflet-bar {
+      display:flex !important; flex-direction:column !important; gap:6px !important;
+      background:transparent !important; border:none !important;
+      box-shadow:none !important; border-radius:0 !important; overflow:visible !important;
     }
-    .leaflet-control-zoom a:hover { background:rgba(30,30,30,0.95) !important; color:#fff !important; }
-    .leaflet-bar { border:1px solid rgba(255,255,255,0.1) !important; border-radius:10px !important; overflow:hidden; box-shadow:0 4px 16px rgba(0,0,0,0.6) !important; }
+    .leaflet-control-zoom a {
+      width:44px !important; height:44px !important; line-height:44px !important;
+      background:rgba(18,18,20,0.55) !important;
+      backdrop-filter:blur(22px) saturate(180%) !important;
+      -webkit-backdrop-filter:blur(22px) saturate(180%) !important;
+      border:1px solid rgba(255,255,255,0.14) !important;
+      border-radius:16px !important;
+      box-shadow:0 8px 28px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.12) !important;
+      color:rgba(255,255,255,0.88) !important;
+      display:flex !important; align-items:center !important; justify-content:center !important;
+      text-decoration:none !important;
+      transition:background 0.15s ease,border-color 0.15s ease !important;
+    }
+    .leaflet-control-zoom a svg { display:block; pointer-events:none; }
+    .leaflet-control-zoom a:hover {
+      background:rgba(28,30,40,0.78) !important;
+      border-color:rgba(255,255,255,0.26) !important; color:#fff !important;
+    }
 
     /* Live bus pulse. The glow is a separate radial-gradient layer animated
        only with transform+opacity (compositor-only) — far cheaper per frame
@@ -857,15 +876,16 @@ function LocateButton({ status, onPress }: {
       onClick={onPress}
       title={title}
       style={{
-        position: 'absolute', right: 10, bottom: 96, zIndex: 1000,
-        width: 42, height: 42, borderRadius: 12,
-        background: 'rgba(16,17,23,0.62)',
-        backdropFilter: 'blur(28px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(28px) saturate(180%)',
-        border: `1px solid ${tracking || isError ? accent + '66' : 'rgba(255,255,255,0.16)'}`,
+        position: 'absolute', right: 10, bottom: 116, zIndex: 1000,
+        width: 44, height: 44, borderRadius: 16,
+        background: 'rgba(18,18,20,0.55)',
+        backdropFilter: 'blur(22px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(22px) saturate(180%)',
+        border: `1px solid ${tracking || isError ? accent + '66' : 'rgba(255,255,255,0.14)'}`,
         boxShadow: '0 8px 28px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.12)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         cursor: 'pointer', userSelect: 'none',
+        transition: 'background 0.15s ease, border-color 0.15s ease',
       }}
     >
       {locating ? (
@@ -875,7 +895,11 @@ function LocateButton({ status, onPress }: {
           animation: 'cs-locate-spin 0.8s linear infinite',
         }} />
       ) : (
-        <span style={{ fontSize: 19, lineHeight: 1, color: accent }}>⌖</span>
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="9" cy="9" r="3.8" stroke={accent} strokeWidth="1.7"/>
+          <path d="M9 1.5V4.5M9 13.5V16.5M1.5 9H4.5M13.5 9H16.5"
+            stroke={accent} strokeWidth="1.7" strokeLinecap="round"/>
+        </svg>
       )}
     </div>
   );
@@ -1032,7 +1056,11 @@ export default function MapView({
       <MapContainer center={CENTER} zoom={14} style={{ width: '100%', height: '100%' }} zoomControl={false}>
         <StylesInjector />
         <TileLayer url={TILE_URL} attribution={TILE_ATTR} />
-        <ZoomControl position="bottomright" />
+        <ZoomControl
+          position="bottomright"
+          zoomInText='<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+          zoomOutText='<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+        />
 
         {visibleCategories.has('stations') && (
           <PointMarkers features={data.stations.features} category="stations" onSelect={onFeatureSelect} onNavigate={onNavigate} />

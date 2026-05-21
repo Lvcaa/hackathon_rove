@@ -237,7 +237,6 @@ export default function LayerTogglePanel({ visible, onToggle, stats }: Props) {
         <div className="cs-lp-hdr" onClick={toggleExpanded}>
           <LayerIcon size={16} opacity={0.6} />
           <span className="cs-lp-hdr-title">Livelli mappa</span>
-          <span className={`cs-lp-hdr-chev${expanded ? '' : ' up'}`}>▾</span>
         </div>
 
         {/* Collapsible body: layer toggles + stats */}
