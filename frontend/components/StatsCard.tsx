@@ -3,24 +3,23 @@ import { View, Text, StyleSheet } from 'react-native';
 import { Colors } from '../constants/colors';
 import { Stats } from '../types/mobility';
 
-interface Props {
-  stats: Stats;
-}
+interface Props { stats: Stats; }
 
 const CARDS = [
-  { key: 'stations' as const, label: 'Stazioni', color: Colors.cyan },
-  { key: 'taxi' as const, label: 'Taxi', color: Colors.yellow },
-  { key: 'carsharing' as const, label: 'Car sharing', color: Colors.purple },
-  { key: 'parking_zones' as const, label: 'Parcheggi', color: Colors.green },
+  { key: 'stations' as const,      label: 'Stazioni',  icon: '🚂', color: Colors.cyan   },
+  { key: 'taxi' as const,          label: 'Taxi',       icon: '🚕', color: Colors.yellow },
+  { key: 'carsharing' as const,    label: 'Car share',  icon: '🚗', color: Colors.purple },
+  { key: 'parking_zones' as const, label: 'Parcheggi', icon: '🅿️', color: Colors.green  },
 ];
 
 export default function StatsCard({ stats }: Props) {
   return (
     <View style={styles.container}>
-      {CARDS.map(({ key, label, color }) => (
+      {CARDS.map(({ key, label, icon, color }) => (
         <View key={key} style={styles.card}>
-          <Text style={styles.label}>{label}</Text>
+          <Text style={styles.icon}>{icon}</Text>
           <Text style={[styles.value, { color }]}>{stats[key]}</Text>
+          <Text style={styles.label}>{label}</Text>
         </View>
       ))}
     </View>
@@ -28,21 +27,27 @@ export default function StatsCard({ stats }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { position: 'absolute', top: 12, right: 12, gap: 6 },
+  container: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    flexDirection: 'column',
+    gap: 6,
+  },
   card: {
-    backgroundColor: 'rgba(17,17,17,0.88)',
+    backgroundColor: 'rgba(13,13,13,0.85)',
+    backdropFilter: 'blur(12px)' as any,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    minWidth: 130,
+    borderColor: 'rgba(255,255,255,0.09)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    minWidth: 110,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
-  label: {
-    fontSize: 9,
-    color: Colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  value: { fontSize: 22, fontWeight: '800', lineHeight: 26 },
+  icon: { fontSize: 16 },
+  value: { fontSize: 20, fontWeight: '800', lineHeight: 24 },
+  label: { fontSize: 10, color: Colors.textMuted, marginTop: 1, flex: 1 },
 });

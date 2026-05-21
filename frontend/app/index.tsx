@@ -8,16 +8,14 @@ import Sidebar from '../components/Sidebar';
 import BottomSheet from '../components/BottomSheet';
 import StatsCard from '../components/StatsCard';
 
-const ALL_CATEGORIES = new Set<CategoryKey>(['stations', 'taxi', 'carsharing', 'parking']);
+const ALL: Set<CategoryKey> = new Set(['stations', 'taxi', 'carsharing', 'parking']);
 
 export default function MapScreen() {
-  const { data, stats, loading } = useMobilityData();
+  const { data, stats } = useMobilityData();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
 
-  const [visibleCategories, setVisibleCategories] = useState<Set<CategoryKey>>(
-    new Set(ALL_CATEGORIES)
-  );
+  const [visibleCategories, setVisibleCategories] = useState<Set<CategoryKey>>(new Set(ALL));
   const [selectedFeature, setSelectedFeature] = useState<{
     feature: MobilityFeature;
     category: CategoryKey;
@@ -31,12 +29,9 @@ export default function MapScreen() {
     });
   }, []);
 
-  const handleFeatureSelect = useCallback(
-    (feature: MobilityFeature, category: CategoryKey) => {
-      setSelectedFeature({ feature, category });
-    },
-    []
-  );
+  const handleFeatureSelect = useCallback((feature: MobilityFeature, category: CategoryKey) => {
+    setSelectedFeature({ feature, category });
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -46,6 +41,7 @@ export default function MapScreen() {
           visibleCategories={visibleCategories}
           onToggleCategory={handleToggleCategory}
           onFeatureSelect={handleFeatureSelect}
+          selectedFeature={selectedFeature}
         />
       )}
       <View style={styles.mapWrapper}>
