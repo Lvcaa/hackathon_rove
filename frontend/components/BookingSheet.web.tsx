@@ -832,13 +832,24 @@ function SheetPanel({
 
 interface Props {
   onRouteReady?: (waypoints: [number, number][], dest: [number, number]) => void;
+  searchTrigger?: { destination: string; nonce: number } | null;
 }
 
-export default function BookingSheet({ onRouteReady }: Props) {
+export default function BookingSheet({ onRouteReady, searchTrigger }: Props) {
   const { state, search, book, dismiss } = useBooking();
   const [query, setQuery] = useState('');
+  const lastNonce = useRef<number | null>(null);
 
   useEffect(() => { injectStyles(); }, []);
+
+  // Auto-trigger from map "Naviga →" click
+  useEffect(() => {
+    if (searchTrigger && searchTrigger.nonce !== lastNonce.current) {
+      lastNonce.current = searchTrigger.nonce;
+      setQuery(searchTrigger.destination);
+      search(searchTrigger.destination);
+    }
+  }, [searchTrigger, search]);
 
   useEffect(() => {
     if (state.phase === 'confirmed' && state.confirmation && onRouteReady) {
