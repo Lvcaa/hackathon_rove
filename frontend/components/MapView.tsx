@@ -1,10 +1,14 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { MobilityData, MobilityFeature, CategoryKey } from '../types/mobility';
+import {
+  MobilityData, MobilityFeature, MobilityCollection, CategoryKey, BusVehicle,
+} from '../types/mobility';
 
 interface Props {
   data: MobilityData;
+  busStops: MobilityCollection;
+  busVehicles: BusVehicle[];
   visibleCategories: Set<CategoryKey>;
   selectedFeature: MobilityFeature | null;
   onFeatureSelect: (feature: MobilityFeature, category: CategoryKey) => void;

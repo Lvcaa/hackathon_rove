@@ -47,8 +47,9 @@ docker compose build --no-cache
 
 ### Backend — `app/`
 
-- `app/main.py` — FastAPI entry point; registers the `mobility` router and CORS middleware (allows all origins for hackathon convenience).
-- `app/routers/mobility.py` — All data endpoints. CSVs from `dataset/` are parsed **once at module import time** and cached in memory as GeoJSON FeatureCollections. Coordinates are transformed from UTM zone 32N (EPSG:32632) to WGS84 on load.
+- `app/main.py` — FastAPI entry point; registers the `mobility` and `transit` routers and CORS middleware (allows all origins for hackathon convenience).
+- `app/routers/mobility.py` — CSV data endpoints + live bus simulation. CSVs from `dataset/` are parsed **once at module import time** and cached in memory as GeoJSON FeatureCollections. Coordinates are transformed from UTM zone 32N (EPSG:32632) to WGS84 on load.
+- `app/routers/transit.py` — Trentino Trasporti GTFS. The official urban GTFS zip is downloaded once (cached in `dataset/gtfs/`, gitignored), parsed at import time into in-memory indexes, and serves real bus stops, routes, and per-stop departure schedules. Service-day filtering uses `calendar.txt` + `calendar_dates.txt`; the reference clock is Europe/Rome.
 
 **API endpoints:**
 | Route | Description |
@@ -58,12 +59,17 @@ docker compose build --no-cache
 | `GET /api/carsharing` | Car-sharing spots (Point features) |
 | `GET /api/parking` | Parking zones (Polygon features) |
 | `GET /api/stats` | Feature counts per category |
+| `GET /api/buses/live` | Simulated live bus positions along Trento routes |
+| `GET /api/busstops` | GTFS bus stops (Point features; `stop_id`, `routes`) |
+| `GET /api/routes` | All urban bus lines with official display colors |
+| `GET /api/busstops/{stop_id}/schedule` | Scheduled departures from a stop; optional `?time=HH:MM&limit=N` |
 
 **Datasets** in `dataset/` (CSV, semicolon-separated):
 - `stazioni.csv` — stations; geometry in WKT POINT, UTM 32N
 - `taxi.csv` — taxi stands; already WGS84 (`x`=lat, `y`=lon columns)
 - `car_sharing.csv` — car-sharing spots; WKT POINT, UTM 32N
 - `zone_parcheggio.csv` — parking zones; WKT POLYGON, UTM 32N
+- `dataset/gtfs/` — Trentino Trasporti urban GTFS zip, auto-downloaded by `transit.py` on first start (gitignored)
 
 ### Frontend — `frontend/`
 

@@ -7,16 +7,16 @@ time so the data is cached in memory and endpoints return instantly.
 
 from __future__ import annotations
 
-import math
 import re
-import time as _time
 from pathlib import Path
 
 import pandas as pd
-import requests as _requests
 from fastapi import APIRouter
 from pyproj import Transformer
 from shapely import wkt as shapely_wkt
+
+from ..tt_realtime import get_live_buses as _tt_live_buses
+from ..tt_realtime import start as _tt_start
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -241,161 +241,17 @@ def get_stats() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Bus stops — Overpass API (cached 1 hour)
+# Live buses — real-time positions from the Trentino Trasporti network
 # ---------------------------------------------------------------------------
 
-_busstops_cache: dict = {}
-_busstops_cache_time: float = 0.0
-_OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-# Bus stops are mapped in OSM under several tagging schemes. The legacy
-# `highway=bus_stop` scheme misses many stops mapped with the modern
-# `public_transport` schema (platforms drawn as nodes or ways, plus
-# stop_position nodes). Union all of them for full coverage.
-# The bbox spans the whole Trento comune — from Mattarello in the south to
-# Gardolo/Meano in the north — so outlying districts aren't cut off.
-_BBOX = "45.98,11.03,46.18,11.24"
-_OVERPASS_QUERY = (
-    "[out:json][timeout:60];"
-    "("
-    f'node["highway"="bus_stop"]({_BBOX});'
-    f'node["public_transport"="platform"]["bus"!="no"]({_BBOX});'
-    f'way["public_transport"="platform"]["bus"!="no"]({_BBOX});'
-    f'node["public_transport"="stop_position"]["bus"="yes"]({_BBOX});'
-    ");"
-    "out body center;"
-)
-
-
-def _fetch_bus_stops() -> dict:
-    global _busstops_cache, _busstops_cache_time
-    now = _time.time()
-    if _busstops_cache and now - _busstops_cache_time < 3600:
-        return _busstops_cache
-    resp = _requests.post(
-        _OVERPASS_URL,
-        data={"data": _OVERPASS_QUERY},
-        headers={"User-Agent": "CommuteSync Hackathon/1.0"},
-        timeout=70,
-    )
-    resp.raise_for_status()
-    raw = resp.json()
-    features: list[dict] = []
-    seen: set[str] = set()
-    for el in raw.get("elements", []):
-        lat, lon = el.get("lat"), el.get("lon")
-        if lat is None or lon is None:
-            # Ways have no direct lat/lon — Overpass returns their centroid.
-            center = el.get("center") or {}
-            lat, lon = center.get("lat"), center.get("lon")
-        if lat is None or lon is None:
-            continue
-        # Merge a platform + stop_position mapped at the same physical stop.
-        key = f"{round(lat, 4)},{round(lon, 4)}"
-        if key in seen:
-            continue
-        seen.add(key)
-        tags = el.get("tags", {})
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lon, lat]},
-            "properties": {
-                "nome": tags.get("name", "Fermata bus"),
-                "routes": tags.get("route_ref", ""),
-                "ref": tags.get("ref", ""),
-                "shelter": tags.get("shelter", "no"),
-            },
-        })
-    result = {"type": "FeatureCollection", "features": features}
-    _busstops_cache = result
-    _busstops_cache_time = now
-    return result
-
-
-@router.get("/api/busstops")
-def get_bus_stops() -> dict:
-    """GeoJSON FeatureCollection of bus stops from OpenStreetMap (cached 1h)."""
-    try:
-        return _fetch_bus_stops()
-    except Exception:
-        return {"type": "FeatureCollection", "features": []}
-
-
-# ---------------------------------------------------------------------------
-# Live bus simulation (time-based positions along real Trento routes)
-# ---------------------------------------------------------------------------
-
-# Waypoints (lat, lon) for 4 main Trento bus lines
-_ROUTES: dict[str, list[tuple[float, float]]] = {
-    "5": [
-        (46.108, 11.107), (46.098, 11.112), (46.088, 11.116),
-        (46.079, 11.118), (46.072, 11.121), (46.066, 11.124),
-        (46.059, 11.128), (46.052, 11.132),
-    ],
-    "B": [
-        (46.071, 11.118), (46.073, 11.121), (46.071, 11.126),
-        (46.068, 11.124), (46.066, 11.119), (46.068, 11.116),
-        (46.071, 11.118),
-    ],
-    "13": [
-        (46.072, 11.118), (46.071, 11.125), (46.070, 11.134),
-        (46.069, 11.142), (46.067, 11.151), (46.066, 11.158),
-    ],
-    "8": [
-        (46.072, 11.121), (46.076, 11.119), (46.082, 11.117),
-        (46.090, 11.114), (46.097, 11.111),
-    ],
-}
-
-_BUSES_PER_ROUTE = 3
-_ROUTE_PERIOD = 600.0  # seconds for a full one-way trip
-
-
-def _interpolate_route(
-    waypoints: list[tuple[float, float]], t: float
-) -> tuple[float, float, float]:
-    """t in [0,1] → (lat, lon, bearing_degrees)."""
-    if len(waypoints) < 2:
-        return waypoints[0][0], waypoints[0][1], 0.0
-    segs = [
-        math.hypot(waypoints[i + 1][0] - waypoints[i][0],
-                   waypoints[i + 1][1] - waypoints[i][1])
-        for i in range(len(waypoints) - 1)
-    ]
-    total = sum(segs)
-    target = t * total
-    accum = 0.0
-    for i, seg_len in enumerate(segs):
-        if accum + seg_len >= target or i == len(segs) - 1:
-            frac = ((target - accum) / seg_len) if seg_len > 0 else 0.0
-            frac = max(0.0, min(1.0, frac))
-            a, b = waypoints[i], waypoints[i + 1]
-            lat = a[0] + frac * (b[0] - a[0])
-            lon = a[1] + frac * (b[1] - a[1])
-            bearing = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0])) % 360
-            return lat, lon, bearing
-        accum += seg_len
-    last = waypoints[-1]
-    return last[0], last[1], 0.0
+_tt_start()
 
 
 @router.get("/api/buses/live")
 def get_live_buses() -> dict:
-    """Simulated real-time bus positions along actual Trento routes."""
-    now = _time.time()
-    features: list[dict] = []
-    for line, waypoints in _ROUTES.items():
-        for i in range(_BUSES_PER_ROUTE):
-            offset = i * (_ROUTE_PERIOD / _BUSES_PER_ROUTE)
-            t = ((now + offset) % _ROUTE_PERIOD) / _ROUTE_PERIOD
-            lat, lon, bearing = _interpolate_route(waypoints, t)
-            features.append({
-                "type": "Feature",
-                "geometry": {"type": "Point", "coordinates": [lon, lat]},
-                "properties": {
-                    "id": f"bus-{line}-{i}",
-                    "route": line,
-                    "bearing": round(bearing),
-                    "speed": 28 + (hash(f"{line}{i}") % 7) * 3,
-                },
-            })
-    return {"type": "FeatureCollection", "features": features}
+    """
+    Real-time bus positions for the whole Trentino Trasporti network (urban
+    and extraurban). Positions come from the official `gtlservice` API and are
+    interpolated along each trip's stop sequence — see `app/tt_realtime.py`.
+    """
+    return _tt_live_buses()

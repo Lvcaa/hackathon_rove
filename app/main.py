@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
-from app.routers import admin, mobility
+from app.routers import admin, mobility, transit
 from app.routers import destinations, parking, sensors, sharing, trips
 
 app = FastAPI(title="CommuteSync API", version="1.0.0")
@@ -22,6 +22,7 @@ def startup() -> None:
 
 # GeoJSON / legacy data endpoints
 app.include_router(mobility.router)
+app.include_router(transit.router)
 app.include_router(admin.router)
 
 # Booking system

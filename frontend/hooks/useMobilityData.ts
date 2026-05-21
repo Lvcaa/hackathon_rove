@@ -49,26 +49,26 @@ const MOCK: MobilityData = {
 const MOCK_BUSSTOPS: MobilityCollection = {
   type: 'FeatureCollection',
   features: [
-    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1185, 46.0716] }, properties: { nome: 'Stazione FS', routes: '5 B 6' } },
-    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1213, 46.0718] }, properties: { nome: 'Piazza Dante', routes: '5 B 8' } },
-    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1241, 46.0643] }, properties: { nome: 'Piazza Venezia', routes: '5 B' } },
-    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1139, 46.0870] }, properties: { nome: 'FTM Commerciale', routes: '8' } },
-    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1364, 46.0693] }, properties: { nome: 'Via Venezia / Corallo', routes: '13' } },
-    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1395, 46.0671] }, properties: { nome: 'Mesiano / Facoltà Ingegneria', routes: '13' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1185, 46.0716] }, properties: { nome: 'Stazione FS', routes: '5 B 6', kind: 'urban' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1213, 46.0718] }, properties: { nome: 'Piazza Dante', routes: '5 B 8', kind: 'urban' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1241, 46.0643] }, properties: { nome: 'Piazza Venezia', routes: '5 B', kind: 'urban' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1139, 46.0870] }, properties: { nome: 'FTM Commerciale', routes: '8', kind: 'urban' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1364, 46.0693] }, properties: { nome: 'Via Venezia / Corallo', routes: '13', kind: 'extraurban' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1395, 46.0671] }, properties: { nome: 'Mesiano / Facoltà Ingegneria', routes: '13', kind: 'extraurban' } },
   ],
 };
 
 // Simulated live buses (mirrors the backend logic, runs in frontend when no backend)
 function simulateBuses(t: number): BusVehicle[] {
-  const routes: Record<string, [number, number][]> = {
-    '5': [[46.108, 11.107], [46.088, 11.116], [46.072, 11.121], [46.059, 11.128], [46.052, 11.132]],
-    'B': [[46.071, 11.118], [46.073, 11.121], [46.068, 11.124], [46.066, 11.119], [46.071, 11.118]],
-    '13': [[46.072, 11.118], [46.070, 11.134], [46.067, 11.151], [46.066, 11.158]],
-    '8': [[46.072, 11.121], [46.082, 11.117], [46.090, 11.114], [46.097, 11.111]],
+  const routes: Record<string, { kind: 'urban' | 'extraurban'; wps: [number, number][] }> = {
+    '5': { kind: 'extraurban', wps: [[46.108, 11.107], [46.088, 11.116], [46.072, 11.121], [46.059, 11.128], [46.052, 11.132]] },
+    'B': { kind: 'urban', wps: [[46.071, 11.118], [46.073, 11.121], [46.068, 11.124], [46.066, 11.119], [46.071, 11.118]] },
+    '13': { kind: 'extraurban', wps: [[46.072, 11.118], [46.070, 11.134], [46.067, 11.151], [46.066, 11.158]] },
+    '8': { kind: 'urban', wps: [[46.072, 11.121], [46.082, 11.117], [46.090, 11.114], [46.097, 11.111]] },
   };
   const period = 600;
   const buses: BusVehicle[] = [];
-  for (const [line, wps] of Object.entries(routes)) {
+  for (const [line, { kind, wps }] of Object.entries(routes)) {
     for (let i = 0; i < 3; i++) {
       const offset = i * (period / 3);
       const frac = ((t + offset) % period) / period;
@@ -79,7 +79,7 @@ function simulateBuses(t: number): BusVehicle[] {
       const lat = a[0] + segFrac * (b[0] - a[0]);
       const lon = a[1] + segFrac * (b[1] - a[1]);
       const bearing = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI + 360) % 360;
-      buses.push({ id: `bus-${line}-${i}`, lat, lon, bearing, route: line, speed: 30 + (i * 5) });
+      buses.push({ id: `bus-${line}-${i}`, lat, lon, bearing, route: line, speed: 30 + (i * 5), kind });
     }
   }
   return buses;
@@ -131,11 +131,11 @@ export function useMobilityData() {
     fetchStatic();
   }, []);
 
-  // Fetch bus stops once (may take a few seconds — Overpass)
+  // Fetch GTFS bus stops once (served from backend memory — fast)
   useEffect(() => {
     async function fetchBusStops() {
       try {
-        const res = await fetch(`${API_BASE}/api/busstops`, { signal: AbortSignal.timeout(75000) });
+        const res = await fetch(`${API_BASE}/api/busstops`, { signal: AbortSignal.timeout(10000) });
         if (!res.ok) return;
         const col: MobilityCollection = await res.json();
         if (col.features.length > 0) {
@@ -164,6 +164,9 @@ export function useMobilityData() {
             bearing: Number(f.properties.bearing),
             route: String(f.properties.route),
             speed: Number(f.properties.speed),
+            kind: f.properties.kind === 'extraurban' ? 'extraurban' : 'urban',
+            delay: f.properties.delay != null ? Number(f.properties.delay) : undefined,
+            headsign: f.properties.headsign != null ? String(f.properties.headsign) : undefined,
           }));
           setBusVehicles(vehicles);
           setStats((prev) => ({ ...prev, buses_live: vehicles.length }));

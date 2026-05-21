@@ -1,11 +1,14 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { View, StyleSheet } from 'react-native';
 import {
   MapContainer, TileLayer, Marker, CircleMarker,
-  Polygon, Popup, useMap,
+  Polygon, Popup, Pane, ZoomControl, useMap,
 } from 'react-leaflet';
 import L from 'leaflet';
-import { MobilityData, MobilityFeature, MobilityCollection, CategoryKey, BusVehicle } from '../types/mobility';
+import {
+  MobilityData, MobilityFeature, MobilityCollection, CategoryKey,
+  BusVehicle, BusKind, StopSchedule, Departure,
+} from '../types/mobility';
 import { CategoryColors, CategoryIcons, CategoryLabels } from '../constants/colors';
 
 interface Props {
@@ -20,7 +23,18 @@ interface Props {
 const TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
 const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
 const CENTER: [number, number] = [46.072, 11.121];
-const ORANGE = '#f97316';
+const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
+
+// A bus stop feature's `kind` property → BusKind (defaults to urban).
+const stopKind = (f: MobilityFeature): BusKind =>
+  f.properties.kind === 'extraurban' ? 'extraurban' : 'urban';
+
+// Trentino Trasporti livery: urban (città) buses are green, extraurban
+// (suburban/valley) buses are blue.
+const BUS_URBAN = '#76b82a';
+const BUS_EXTRA = '#1c86cf';
+const busColor = (kind: BusKind) => (kind === 'extraurban' ? BUS_EXTRA : BUS_URBAN);
+const busKindLabel = (kind: BusKind) => (kind === 'extraurban' ? 'Extraurbano' : 'Urbano');
 
 // ── CSS injection ─────────────────────────────────────────────────────────────
 
@@ -68,13 +82,20 @@ function injectStyles() {
     .leaflet-control-zoom a:hover { background:rgba(30,30,30,0.95) !important; color:#fff !important; }
     .leaflet-bar { border:1px solid rgba(255,255,255,0.1) !important; border-radius:10px !important; overflow:hidden; box-shadow:0 4px 16px rgba(0,0,0,0.6) !important; }
 
-    /* Live bus glow pulse */
-    @keyframes bus-glow-pulse {
-      0%   { filter: drop-shadow(0 0 5px rgba(249,115,22,0.55)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
-      50%  { filter: drop-shadow(0 0 14px rgba(249,115,22,1.0)) drop-shadow(0 0 24px rgba(249,115,22,0.4)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
-      100% { filter: drop-shadow(0 0 5px rgba(249,115,22,0.55)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
+    /* Live bus glow pulse — green for urban, blue for extraurban */
+    @keyframes bus-glow-urban {
+      0%   { filter: drop-shadow(0 0 5px rgba(118,184,42,0.55)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
+      50%  { filter: drop-shadow(0 0 14px rgba(118,184,42,1.0)) drop-shadow(0 0 24px rgba(118,184,42,0.4)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
+      100% { filter: drop-shadow(0 0 5px rgba(118,184,42,0.55)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
     }
-    .bus-vehicle-inner { animation: bus-glow-pulse 2.4s ease-in-out infinite; display:inline-block; }
+    @keyframes bus-glow-extra {
+      0%   { filter: drop-shadow(0 0 5px rgba(28,134,207,0.55)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
+      50%  { filter: drop-shadow(0 0 14px rgba(28,134,207,1.0)) drop-shadow(0 0 24px rgba(28,134,207,0.4)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
+      100% { filter: drop-shadow(0 0 5px rgba(28,134,207,0.55)) drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
+    }
+    .bus-vehicle-inner { display:inline-block; }
+    .bus-vehicle-inner.urban { animation: bus-glow-urban 2.4s ease-in-out infinite; }
+    .bus-vehicle-inner.extra { animation: bus-glow-extra 2.4s ease-in-out infinite; }
 
     /* Glide the marker between polled positions (matches BUS_REFRESH_MS).
        Suppressed during zoom so buses don't lag behind the map. */
@@ -111,10 +132,10 @@ function createPointIcon(category: CategoryKey) {
 
 // Top-down SVG bus icon. Front = top of SVG (North = 0°).
 // Rotating by compass bearing directly maps to CSS rotate().
-function busSvg(route: string) {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="62" viewBox="0 0 40 62" fill="none">
+function busSvg(route: string, body: string) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="40" viewBox="0 0 40 62" fill="none">
     <!-- Body -->
-    <rect x="3" y="3" width="34" height="56" rx="9" fill="#f97316"/>
+    <rect x="3" y="3" width="34" height="56" rx="9" fill="${body}"/>
     <!-- Windshield (front, top) -->
     <rect x="7" y="6" width="26" height="13" rx="5" fill="rgba(255,255,255,0.30)"/>
     <!-- Horizontal panel seams -->
@@ -132,19 +153,20 @@ function busSvg(route: string) {
   </svg>`;
 }
 
-function createBusVehicleIcon(route: string, bearing: number) {
+function createBusVehicleIcon(route: string, bearing: number, kind: BusKind) {
+  const glowClass = kind === 'extraurban' ? 'extra' : 'urban';
   return L.divIcon({
     className: 'cs-bus-marker',
     // Outer div carries the glow-pulse animation; inner div carries the rotation.
     // Separating them prevents the animation from interfering with position glide.
-    html: `<div class="bus-vehicle-inner">
-      <div style="transform:rotate(${bearing}deg);transform-origin:20px 31px;line-height:0;">
-        ${busSvg(route)}
+    html: `<div class="bus-vehicle-inner ${glowClass}">
+      <div style="transform:rotate(${bearing}deg);transform-origin:13px 20px;line-height:0;">
+        ${busSvg(route, busColor(kind))}
       </div>
     </div>`,
-    iconSize: [40, 62],
-    iconAnchor: [20, 31],   // center of bus body
-    popupAnchor: [0, -32],
+    iconSize: [26, 40],
+    iconAnchor: [13, 20],   // center of bus body
+    popupAnchor: [0, -22],
   });
 }
 
@@ -194,72 +216,165 @@ function FeaturePopup({ feature, category }: { feature: MobilityFeature; categor
   );
 }
 
-function BusStopPopup({ feature }: { feature: MobilityFeature }) {
+const dimStyle: React.CSSProperties = {
+  fontSize: 11, color: 'rgba(255,255,255,0.4)',
+  padding: '12px 0 6px', textAlign: 'center', fontWeight: 500,
+};
+
+function DepartureRow({ d }: { d: Departure }) {
+  const soon = d.in_min <= 2;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0',
+      borderTop: '1px solid rgba(255,255,255,0.06)',
+    }}>
+      <span style={{
+        background: `#${d.color}`, color: `#${d.text_color}`,
+        minWidth: 22, textAlign: 'center', borderRadius: 5,
+        fontSize: 11, fontWeight: 800, padding: '3px 5px', flexShrink: 0,
+      }}>{d.route}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 11, color: 'rgba(255,255,255,0.85)', fontWeight: 500,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>{d.headsign || '—'}</div>
+      </div>
+      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#fff', lineHeight: 1.2 }}>{d.time}</div>
+        <div style={{
+          fontSize: 9, fontWeight: 700, lineHeight: 1.3,
+          color: soon ? '#34d399' : 'rgba(255,255,255,0.4)',
+        }}>{d.in_min <= 0 ? 'in arrivo' : `${d.in_min} min`}</div>
+      </div>
+    </div>
+  );
+}
+
+function BusStopPopup({ feature, schedule, status, refTime, onTimeChange }: {
+  feature: MobilityFeature;
+  schedule: StopSchedule | null;
+  status: 'idle' | 'loading' | 'error';
+  refTime: string;
+  onTimeChange: (t: string) => void;
+}) {
   const nome = String(feature.properties.nome || 'Fermata bus');
+  const code = String(feature.properties.code || '');
   const routes = String(feature.properties.routes || '');
+  const timeValue = refTime || schedule?.time || '';
+  const kind = stopKind(feature);
+  const color = busColor(kind);
 
   return (
-    <div style={{ padding: '14px 18px 12px', minWidth: 180 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingRight: 18 }}>
+    <div style={{ padding: '14px 16px 12px', minWidth: 250, maxWidth: 290 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 9, paddingRight: 18 }}>
         <div style={{
           width: 30, height: 30, borderRadius: '50%',
-          background: ORANGE + '22', border: `1.5px solid ${ORANGE}`,
+          background: color + '22', border: `1.5px solid ${color}`,
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0,
         }}>
-          🚌
+          🚏
         </div>
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 13, color: '#fff', lineHeight: 1.2 }}>{nome}</div>
-          <div style={{ fontSize: 11, color: ORANGE, marginTop: 2, fontWeight: 600 }}>Fermata bus</div>
+          <div style={{ fontSize: 10, color, marginTop: 2, fontWeight: 600 }}>
+            Fermata {busKindLabel(kind).toLowerCase()}{code ? ` · ${code}` : ''}
+          </div>
         </div>
       </div>
+
+      {/* Lines serving this stop */}
       {routes && (
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
-          {routes.split(/[\s;,]+/).filter(Boolean).map((r) => (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
+          {routes.split(/\s+/).filter(Boolean).slice(0, 14).map((r) => (
             <span key={r} style={{
-              background: ORANGE + '20', border: `1px solid ${ORANGE}55`,
-              borderRadius: 5, padding: '2px 7px', fontSize: 10, fontWeight: 700, color: ORANGE,
+              background: color + '1e', border: `1px solid ${color}4d`,
+              borderRadius: 5, padding: '1px 6px', fontSize: 9, fontWeight: 700, color,
             }}>{r}</span>
           ))}
         </div>
       )}
+
+      {/* Time control */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6, marginTop: 10,
+        borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 10,
+      }}>
+        <span style={{
+          flex: 1, fontSize: 9, color: 'rgba(255,255,255,0.45)',
+          letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 700,
+        }}>Prossime corse</span>
+        <input
+          type="time"
+          value={timeValue}
+          onChange={(e) => onTimeChange(e.target.value)}
+          style={{
+            background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.14)',
+            borderRadius: 6, color: '#fff', fontSize: 11, fontWeight: 600,
+            padding: '3px 6px', outline: 'none', colorScheme: 'dark',
+          }}
+        />
+      </div>
+
+      {/* Departures */}
+      <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+        {status === 'loading' && <div style={dimStyle}>Caricamento orari…</div>}
+        {status === 'error' && <div style={dimStyle}>Orari non disponibili</div>}
+        {status === 'idle' && schedule && schedule.departures.length === 0 && (
+          <div style={dimStyle}>Nessuna corsa in programma</div>
+        )}
+        {status === 'idle' && schedule?.departures.map((d, i) => (
+          <DepartureRow key={i} d={d} />
+        ))}
+      </div>
     </div>
   );
 }
 
 function BusVehiclePopup({ bus }: { bus: BusVehicle }) {
+  const color = busColor(bus.kind);
+  const delay = bus.delay ?? 0;
+  const onTime = delay <= 0;
+  const delayColor = onTime ? '#34d399' : delay <= 3 ? '#fbbf24' : '#f87171';
+  const delayText = onTime ? 'In orario' : `+${delay} min`;
   return (
     <div style={{ padding: '14px 18px 12px', minWidth: 180 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 8, paddingRight: 18 }}>
         <div style={{
           width: 36, height: 36, borderRadius: '50%',
-          background: ORANGE, border: '2px solid rgba(255,255,255,0.25)',
+          background: color, border: '2px solid rgba(255,255,255,0.25)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontSize: 16, fontWeight: 800, color: '#fff', flexShrink: 0,
         }}>
           {bus.route}
         </div>
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 14, color: '#fff' }}>Linea {bus.route}</div>
-          <div style={{ fontSize: 11, color: ORANGE, marginTop: 2, fontWeight: 600 }}>Bus in servizio</div>
+          <div style={{ fontSize: 11, color, marginTop: 2, fontWeight: 600 }}>Bus {busKindLabel(bus.kind)}</div>
         </div>
+      </div>
+      {bus.headsign && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Destinazione</span>
+          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 600, textAlign: 'right' }}>{bus.headsign}</span>
+        </div>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Ritardo</span>
+        <span style={{ fontSize: 11, color: delayColor, fontWeight: 700 }}>{delayText}</span>
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
         <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Velocità</span>
         <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 600 }}>{bus.speed} km/h</span>
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Direzione</span>
-        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 600 }}>{Math.round(bus.bearing)}°</span>
       </div>
       <div style={{
         marginTop: 10,
         padding: '6px 0',
         textAlign: 'center',
         borderRadius: 8,
-        background: 'rgba(249,115,22,0.15)',
-        border: '1px solid rgba(249,115,22,0.3)',
-        fontSize: 11, fontWeight: 700, color: ORANGE,
+        background: color + '26',
+        border: `1px solid ${color}4d`,
+        fontSize: 11, fontWeight: 700, color,
       }}>
         ● In tempo reale
       </div>
@@ -317,24 +432,74 @@ function ParkingZones({ features, onSelect }: {
   );
 }
 
+// A single bus stop. Its GTFS departure board is fetched lazily — only when
+// the stop is clicked — so opening the map doesn't fire a request per stop.
+function BusStopMarker({ feature }: { feature: MobilityFeature }) {
+  const coords = feature.geometry.coordinates as number[];
+  const stopId = String(feature.properties.stop_id ?? '');
+  const color = busColor(stopKind(feature));
+
+  const [schedule, setSchedule] = useState<StopSchedule | null>(null);
+  const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [refTime, setRefTime] = useState('');
+  const reqId = useRef(0);
+
+  const load = useCallback((time: string) => {
+    if (!stopId) { setStatus('error'); return; }
+    const id = ++reqId.current;
+    setStatus('loading');
+    const q = time ? `?time=${encodeURIComponent(time)}` : '';
+    fetch(`${API_BASE}/api/busstops/${encodeURIComponent(stopId)}/schedule${q}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('http'))))
+      .then((d: StopSchedule) => {
+        if (id !== reqId.current) return;
+        setSchedule(d);
+        setStatus('idle');
+      })
+      .catch(() => {
+        if (id === reqId.current) setStatus('error');
+      });
+  }, [stopId]);
+
+  const handleTimeChange = useCallback((t: string) => {
+    setRefTime(t);
+    load(t);
+  }, [load]);
+
+  return (
+    <CircleMarker
+      center={[coords[1], coords[0]]}
+      radius={7}
+      pane="cs-bus-stops"
+      pathOptions={{
+        fillColor: color, fillOpacity: 0.85,
+        color, weight: 1.5, opacity: 0.9,
+      }}
+      eventHandlers={{
+        click: () => {
+          if (!schedule && status !== 'loading') load(refTime);
+        },
+      }}
+    >
+      <Popup closeButton minWidth={250}>
+        <BusStopPopup
+          feature={feature}
+          schedule={schedule}
+          status={status}
+          refTime={refTime}
+          onTimeChange={handleTimeChange}
+        />
+      </Popup>
+    </CircleMarker>
+  );
+}
+
 function BusStopsLayer({ features }: { features: MobilityFeature[] }) {
   return (
     <>
-      {features.map((f, i) => {
-        const coords = f.geometry.coordinates as number[];
-        return (
-          <CircleMarker key={i} center={[coords[1], coords[0]]}
-            radius={5}
-            pathOptions={{
-              fillColor: ORANGE, fillOpacity: 0.75,
-              color: ORANGE, weight: 1.5, opacity: 0.9,
-            }}>
-            <Popup closeButton>
-              <BusStopPopup feature={f} />
-            </Popup>
-          </CircleMarker>
-        );
-      })}
+      {features.map((f, i) => (
+        <BusStopMarker key={String(f.properties.stop_id ?? i)} feature={f} />
+      ))}
     </>
   );
 }
@@ -350,10 +515,10 @@ function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
     <>
       {vehicles.map((bus) => {
         const bucket = Math.round(bus.bearing / 15) * 15;
-        const cacheKey = `${bus.id}:${bucket}`;
+        const cacheKey = `${bus.id}:${bus.route}:${bus.kind}:${bucket}`;
         let icon = iconCache.current.get(cacheKey);
         if (!icon) {
-          icon = createBusVehicleIcon(bus.route, bucket);
+          icon = createBusVehicleIcon(bus.route, bucket, bus.kind);
           iconCache.current.set(cacheKey, icon);
         }
         return (
@@ -371,11 +536,21 @@ function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function MapView({ data, busStops, busVehicles, visibleCategories, selectedFeature, onFeatureSelect }: Props) {
+  const showUrbanStops = visibleCategories.has('busstops_urban');
+  const showExtraStops = visibleCategories.has('busstops_extraurban');
+  const urbanStops = showUrbanStops
+    ? busStops.features.filter((f) => stopKind(f) === 'urban')
+    : [];
+  const extraStops = showExtraStops
+    ? busStops.features.filter((f) => stopKind(f) === 'extraurban')
+    : [];
+
   return (
     <View style={styles.container}>
-      <MapContainer center={CENTER} zoom={14} style={{ width: '100%', height: '100%' }} zoomControl>
+      <MapContainer center={CENTER} zoom={14} style={{ width: '100%', height: '100%' }} zoomControl={false}>
         <StylesInjector />
         <TileLayer url={TILE_URL} attribution={TILE_ATTR} />
+        <ZoomControl position="bottomright" />
 
         {visibleCategories.has('stations') && (
           <PointMarkers features={data.stations.features} category="stations" onSelect={onFeatureSelect} />
@@ -389,8 +564,13 @@ export default function MapView({ data, busStops, busVehicles, visibleCategories
         {visibleCategories.has('parking') && (
           <ParkingZones features={data.parking.features} onSelect={onFeatureSelect} />
         )}
-        {visibleCategories.has('busstops') && (
-          <BusStopsLayer features={busStops.features} />
+        {/* Bus stops live in their own pane above the overlay-pane (z 400) so
+            the translucent parking polygons can't intercept stop clicks. */}
+        {(showUrbanStops || showExtraStops) && (
+          <Pane name="cs-bus-stops" style={{ zIndex: 550 }}>
+            {showUrbanStops && <BusStopsLayer features={urbanStops} />}
+            {showExtraStops && <BusStopsLayer features={extraStops} />}
+          </Pane>
         )}
         {visibleCategories.has('buses') && (
           <LiveBusLayer vehicles={busVehicles} />

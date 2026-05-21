@@ -7,8 +7,12 @@ import MapView from '../components/MapView';
 import Sidebar from '../components/Sidebar';
 import BottomSheet from '../components/BottomSheet';
 import StatsCard from '../components/StatsCard';
+import LayerTogglePanel from '../components/LayerTogglePanel';
 
-const ALL: Set<CategoryKey> = new Set(['stations', 'taxi', 'carsharing', 'parking', 'busstops', 'buses']);
+const ALL: Set<CategoryKey> = new Set([
+  'stations', 'taxi', 'carsharing', 'parking',
+  'busstops_urban', 'busstops_extraurban', 'buses',
+]);
 
 export default function MapScreen() {
   const { data, busStops, busVehicles, stats } = useMobilityData();
@@ -54,6 +58,7 @@ export default function MapScreen() {
           onFeatureSelect={handleFeatureSelect}
         />
         <StatsCard stats={stats} />
+        <LayerTogglePanel visible={visibleCategories} onToggle={handleToggleCategory} />
         {!isDesktop && (
           <BottomSheet
             data={data}

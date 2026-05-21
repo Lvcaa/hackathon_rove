@@ -13,3 +13,6 @@ outputs/
 wandb/
 mlruns/
 .superpowers/
+
+# Cached GTFS feed (downloaded at backend startup)
+dataset/gtfs/

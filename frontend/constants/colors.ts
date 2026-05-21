@@ -12,12 +12,18 @@ export const Colors = {
   orange: '#f97316',
 } as const;
 
+// Trentino Trasporti livery: urban (città) network is green, extraurban
+// (suburban/valley) network is blue. Bus stops follow the same coding.
+export const BusUrbanColor = '#76b82a';
+export const BusExtraColor = '#1c86cf';
+
 export const CategoryColors: Record<string, string> = {
   stations: Colors.cyan,
   taxi: Colors.yellow,
   carsharing: Colors.purple,
   parking: Colors.green,
-  busstops: Colors.orange,
+  busstops_urban: BusUrbanColor,
+  busstops_extraurban: BusExtraColor,
   buses: Colors.orange,
 };
 
@@ -26,7 +32,8 @@ export const CategoryIcons: Record<string, string> = {
   taxi: '🚕',
   carsharing: '🚗',
   parking: '🅿️',
-  busstops: '🚌',
+  busstops_urban: '🚏',
+  busstops_extraurban: '🚏',
   buses: '🚍',
 };
 
@@ -35,6 +42,7 @@ export const CategoryLabels: Record<string, string> = {
   taxi: 'Taxi',
   carsharing: 'Car Share',
   parking: 'Parcheggi',
-  busstops: 'Fermate bus',
+  busstops_urban: 'Fermate urbane',
+  busstops_extraurban: 'Fermate extraurbane',
   buses: 'Bus in tempo reale',
 };
