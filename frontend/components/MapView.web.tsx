@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import {
-  MapContainer, TileLayer, Marker, CircleMarker,
+  MapContainer, TileLayer, Marker, CircleMarker, Circle,
   Polygon, Polyline, Popup, Pane, ZoomControl, useMap,
 } from 'react-leaflet';
 import L from 'leaflet';
@@ -9,6 +9,7 @@ import {
   MobilityData, MobilityFeature, MobilityCollection, CategoryKey,
   BusVehicle, BusKind, StopSchedule, Departure,
 } from '../types/mobility';
+import { LiveLocation, LocationStatus } from '../hooks/useLiveLocation';
 import { CategoryColors, CategoryIcons, CategoryLabels } from '../constants/colors';
 
 interface Props {
@@ -19,6 +20,10 @@ interface Props {
   selectedFeature: MobilityFeature | null;
   onFeatureSelect: (feature: MobilityFeature, category: CategoryKey) => void;
   onNavigate?: (feature: MobilityFeature, category: CategoryKey) => void;
+  userLocation?: LiveLocation | null;
+  locationStatus?: LocationStatus;
+  recenterNonce?: number;
+  onLocate?: () => void;
 }
 
 const TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
@@ -118,6 +123,27 @@ function injectStyles() {
        Suppressed during zoom so buses don't lag behind the map. */
     .cs-bus-marker { transition: transform 3s linear; }
     .leaflet-zoom-anim .cs-bus-marker { transition: none; }
+
+    /* Live user-location marker — a blue dot with an expanding sonar ring. */
+    .cs-user-dot { position:relative; width:22px; height:22px; }
+    .cs-user-dot-core {
+      position:absolute; left:11px; top:11px; width:15px; height:15px;
+      margin:-7.5px 0 0 -7.5px; border-radius:50%;
+      background:#3b82f6; border:2.5px solid #fff;
+      box-shadow:0 0 10px rgba(59,130,246,0.95), 0 1px 5px rgba(0,0,0,0.55);
+    }
+    .cs-user-dot-pulse {
+      position:absolute; left:11px; top:11px; width:22px; height:22px;
+      margin:-11px 0 0 -11px; border-radius:50%;
+      background:rgba(59,130,246,0.5); pointer-events:none;
+      will-change:transform,opacity;
+      animation: cs-user-pulse 2.2s ease-out infinite;
+    }
+    @keyframes cs-user-pulse {
+      0%   { transform:scale(0.45); opacity:0.8; }
+      100% { transform:scale(3); opacity:0; }
+    }
+    @keyframes cs-locate-spin { to { transform:rotate(360deg); } }
   `;
   document.head.appendChild(style);
 }
@@ -745,9 +771,119 @@ function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
   );
 }
 
+// ── Live user location ──────────────────────────────────────────────────────────
+
+function createUserIcon() {
+  return L.divIcon({
+    className: '',
+    html: `<div class="cs-user-dot">
+      <div class="cs-user-dot-pulse"></div>
+      <div class="cs-user-dot-core"></div>
+    </div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  });
+}
+
+// Renders the live position dot + GPS accuracy halo. Flies the map to the user
+// on the first fix, and again whenever `recenterNonce` changes (locate button
+// pressed while already tracking).
+function UserLocationLayer({ location, recenterNonce }: {
+  location: LiveLocation;
+  recenterNonce: number;
+}) {
+  const map = useMap();
+  const icon = useMemo(createUserIcon, []);
+  const didFirstFix = useRef(false);
+  const lastRecenter = useRef(recenterNonce);
+
+  useEffect(() => {
+    if (!didFirstFix.current) {
+      didFirstFix.current = true;
+      map.flyTo([location.lat, location.lng], Math.max(map.getZoom(), 16), { duration: 1.2 });
+    }
+  }, [location, map]);
+
+  useEffect(() => {
+    if (recenterNonce !== lastRecenter.current) {
+      lastRecenter.current = recenterNonce;
+      map.flyTo([location.lat, location.lng], Math.max(map.getZoom(), 16), { duration: 0.8 });
+    }
+  }, [recenterNonce, location, map]);
+
+  return (
+    <Pane name="cs-user-loc" style={{ zIndex: 560 }}>
+      <Circle
+        center={[location.lat, location.lng]}
+        radius={location.accuracy}
+        pane="cs-user-loc"
+        interactive={false}
+        pathOptions={{
+          color: '#3b82f6', weight: 1, opacity: 0.45,
+          fillColor: '#3b82f6', fillOpacity: 0.1,
+        }}
+      />
+      <Marker
+        position={[location.lat, location.lng]}
+        icon={icon}
+        pane="cs-user-loc"
+        interactive={false}
+      />
+    </Pane>
+  );
+}
+
+// Floating glass control that requests / re-centres on the live location.
+function LocateButton({ status, onPress }: {
+  status: LocationStatus;
+  onPress: () => void;
+}) {
+  const locating = status === 'locating';
+  const tracking = status === 'tracking';
+  const isError  = status === 'error';
+  const accent   = isError ? '#f87171' : tracking ? '#3b82f6' : 'rgba(255,255,255,0.88)';
+  const title = isError
+    ? 'Posizione non disponibile — riprova'
+    : tracking
+    ? 'Centra sulla mia posizione'
+    : 'Mostra la mia posizione';
+
+  return (
+    <div
+      onClick={onPress}
+      title={title}
+      style={{
+        position: 'absolute', right: 10, bottom: 96, zIndex: 1000,
+        width: 42, height: 42, borderRadius: 12,
+        background: 'rgba(16,17,23,0.62)',
+        backdropFilter: 'blur(28px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(28px) saturate(180%)',
+        border: `1px solid ${tracking || isError ? accent + '66' : 'rgba(255,255,255,0.16)'}`,
+        boxShadow: '0 8px 28px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.12)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        cursor: 'pointer', userSelect: 'none',
+      }}
+    >
+      {locating ? (
+        <div style={{
+          width: 18, height: 18, borderRadius: '50%',
+          border: '2px solid rgba(255,255,255,0.2)', borderTopColor: '#3b82f6',
+          animation: 'cs-locate-spin 0.8s linear infinite',
+        }} />
+      ) : (
+        <span style={{ fontSize: 19, lineHeight: 1, color: accent }}>⌖</span>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export default function MapView({ data, busStops, busVehicles, visibleCategories, selectedFeature, onFeatureSelect, onNavigate }: Props) {
+export default function MapView({
+  data, busStops, busVehicles, visibleCategories, selectedFeature,
+  onFeatureSelect, onNavigate,
+  userLocation, locationStatus = 'idle', recenterNonce = 0, onLocate,
+}: Props) {
   const showUrbanStops = visibleCategories.has('busstops_urban');
   const showExtraStops = visibleCategories.has('busstops_extraurban');
   // Memoised so the array identity is stable across the 3 s bus refreshes —
@@ -791,7 +927,11 @@ export default function MapView({ data, busStops, busVehicles, visibleCategories
         {visibleCategories.has('buses') && (
           <LiveBusLayer vehicles={busVehicles} />
         )}
+        {userLocation && (
+          <UserLocationLayer location={userLocation} recenterNonce={recenterNonce} />
+        )}
       </MapContainer>
+      {onLocate && <LocateButton status={locationStatus} onPress={onLocate} />}
     </View>
   );
 }

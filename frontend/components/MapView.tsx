@@ -4,6 +4,7 @@ import { WebView } from 'react-native-webview';
 import {
   MobilityData, MobilityFeature, MobilityCollection, CategoryKey, BusVehicle,
 } from '../types/mobility';
+import { LiveLocation, LocationStatus } from '../hooks/useLiveLocation';
 
 interface Props {
   data: MobilityData;
@@ -13,6 +14,10 @@ interface Props {
   selectedFeature: MobilityFeature | null;
   onFeatureSelect: (feature: MobilityFeature, category: CategoryKey) => void;
   onNavigate?: (feature: MobilityFeature, category: CategoryKey) => void;
+  userLocation?: LiveLocation | null;
+  locationStatus?: LocationStatus;
+  recenterNonce?: number;
+  onLocate?: () => void;
 }
 
 export default function MapView({ data, visibleCategories }: Props) {

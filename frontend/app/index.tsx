@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { View, StyleSheet, useWindowDimensions } from 'react-native';
 import { useMobilityData } from '../hooks/useMobilityData';
+import { useLiveLocation } from '../hooks/useLiveLocation';
 import { MobilityFeature, CategoryKey } from '../types/mobility';
 import { Colors } from '../constants/colors';
 import MapView from '../components/MapView';
@@ -16,10 +17,12 @@ const ALL: Set<CategoryKey> = new Set([
 
 export default function MapScreen() {
   const { data, busStops, busVehicles, stats } = useMobilityData();
+  const { location, status: locationStatus, start: startLocating } = useLiveLocation();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
 
   const [visibleCategories, setVisibleCategories] = useState<Set<CategoryKey>>(new Set(ALL));
+  const [recenterNonce, setRecenterNonce] = useState(0);
   const [selectedFeature, setSelectedFeature] = useState<{
     feature: MobilityFeature;
     category: CategoryKey;
@@ -44,6 +47,15 @@ export default function MapScreen() {
     setBookingTrigger((prev) => ({ destination: dest, nonce: (prev?.nonce ?? 0) + 1 }));
   }, []);
 
+  // Locate button: start tracking on first press, otherwise re-centre the map.
+  const handleLocate = useCallback(() => {
+    if (locationStatus === 'tracking') {
+      setRecenterNonce((n) => n + 1);
+    } else {
+      startLocating();
+    }
+  }, [locationStatus, startLocating]);
+
   return (
     <View style={styles.container}>
       {isDesktop && (
@@ -64,6 +76,10 @@ export default function MapScreen() {
           selectedFeature={selectedFeature?.feature ?? null}
           onFeatureSelect={handleFeatureSelect}
           onNavigate={handleNavigate}
+          userLocation={location}
+          locationStatus={locationStatus}
+          recenterNonce={recenterNonce}
+          onLocate={handleLocate}
         />
         <LayerTogglePanel
           visible={visibleCategories}
