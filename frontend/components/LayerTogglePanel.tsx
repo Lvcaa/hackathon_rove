@@ -82,49 +82,50 @@ export default function LayerTogglePanel({ visible, onToggle, stats }: Props) {
 
       <Animated.View style={[styles.bodyClip, contentH > 0 && { height: bodyHeight }]}>
         <View
-          style={styles.body}
           onLayout={(e) => {
             const h = e.nativeEvent.layout.height;
             if (h > 0 && h !== contentH) setContentH(h);
           }}
         >
-          {LAYERS.map((key) => {
-            const on = visible.has(key);
-            const color = CategoryColors[key];
-            return (
-              <Pressable
-                key={key}
-                style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-                onPress={() => onToggle(key)}
-              >
-                <Text style={styles.rowIcon}>{CategoryIcons[key]}</Text>
-                <Text
-                  style={[styles.rowLabel, !on && styles.rowLabelOff]}
-                  numberOfLines={1}
+          <View style={styles.body}>
+            {LAYERS.map((key) => {
+              const on = visible.has(key);
+              const color = CategoryColors[key];
+              return (
+                <Pressable
+                  key={key}
+                  style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+                  onPress={() => onToggle(key)}
                 >
-                  {CategoryLabels[key]}
-                </Text>
-                <Switch on={on} color={color} />
-              </Pressable>
-            );
-          })}
+                  <Text style={styles.rowIcon}>{CategoryIcons[key]}</Text>
+                  <Text
+                    style={[styles.rowLabel, !on && styles.rowLabelOff]}
+                    numberOfLines={1}
+                  >
+                    {CategoryLabels[key]}
+                  </Text>
+                  <Switch on={on} color={color} />
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <View style={styles.statsSection}>
+            <Text style={styles.statsHeading}>Risorse in rete</Text>
+            <View style={styles.statsGrid}>
+              {STATS.map(({ key, label, icon, color }) => (
+                <View key={key} style={styles.statCell}>
+                  <Text style={styles.statIcon}>{icon}</Text>
+                  <View style={styles.statText}>
+                    <Text style={[styles.statValue, { color }]}>{stats[key]}</Text>
+                    <Text style={styles.statLabel} numberOfLines={1}>{label}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
         </View>
       </Animated.View>
-
-      <View style={styles.statsSection}>
-        <Text style={styles.statsHeading}>Risorse in rete</Text>
-        <View style={styles.statsGrid}>
-          {STATS.map(({ key, label, icon, color }) => (
-            <View key={key} style={styles.statCell}>
-              <Text style={styles.statIcon}>{icon}</Text>
-              <View style={styles.statText}>
-                <Text style={[styles.statValue, { color }]}>{stats[key]}</Text>
-                <Text style={styles.statLabel} numberOfLines={1}>{label}</Text>
-              </View>
-            </View>
-          ))}
-        </View>
-      </View>
     </View>
   );
 }
