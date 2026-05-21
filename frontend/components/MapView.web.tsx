@@ -105,21 +105,20 @@ function injectStyles() {
     }
     .leaflet-control-zoom a {
       width:44px !important; height:44px !important; line-height:44px !important;
-      background:rgba(18,18,20,0.55) !important;
-      backdrop-filter:blur(22px) saturate(180%) !important;
-      -webkit-backdrop-filter:blur(22px) saturate(180%) !important;
-      border:1px solid rgba(255,255,255,0.14) !important;
-      border-radius:16px !important;
-      box-shadow:0 8px 28px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.12) !important;
-      color:rgba(255,255,255,0.88) !important;
+      background:#ffffff !important;
+      border:1px solid rgba(0,0,0,0.12) !important;
+      border-radius:12px !important;
+      box-shadow:0 4px 12px rgba(0,0,0,0.15) !important;
+      color:#000000 !important;
       display:flex !important; align-items:center !important; justify-content:center !important;
       text-decoration:none !important;
-      transition:background 0.15s ease,border-color 0.15s ease !important;
+      transition:background 0.15s ease,border-color 0.15s ease,color 0.15s ease !important;
     }
     .leaflet-control-zoom a svg { display:block; pointer-events:none; }
     .leaflet-control-zoom a:hover {
-      background:rgba(28,30,40,0.78) !important;
-      border-color:rgba(255,255,255,0.26) !important; color:#fff !important;
+      background:#f4f4f5 !important;
+      border-color:rgba(0,0,0,0.2) !important;
+      color:#000000 !important;
     }
 
     /* Live bus pulse. The glow is a separate radial-gradient layer animated

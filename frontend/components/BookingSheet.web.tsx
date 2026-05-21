@@ -223,6 +223,13 @@ const MODALITY_COLOR: Record<string, string> = {
 // ── SVG icons ─────────────────────────────────────────────────────────────────
 
 const Ico = {
+  User: () => (
+    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2"
+      strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+      <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  ),
   Search: () => (
     <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2"
       strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
@@ -1515,6 +1522,460 @@ function RouteSheetPanel({
   );
 }
 
+
+// ── User Dropdown & Panels ───────────────────────────────────────────────────
+
+function UserMenuDropdown({
+  onSelectMode,
+  activeMode,
+}: {
+  onSelectMode: (mode: 'user' | 'prenotazioni' | 'settings') => void;
+  activeMode: 'user' | 'prenotazioni' | 'settings' | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [open]);
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      {/* Drop-up Menu */}
+      {open && (
+        <div
+          className="cs-pane-in"
+          style={{
+            position: 'absolute',
+            bottom: 74,
+            right: 0,
+            width: 170,
+            background: 'rgba(17,19,27,0.92)',
+            backdropFilter: 'blur(30px) saturate(180%)',
+            WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: 16,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08)',
+            padding: 6,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+            zIndex: 1010,
+          }}
+        >
+          <button
+            onClick={() => { onSelectMode('user'); setOpen(false); }}
+            className="cs-suggestion"
+            style={dropdownItemStyle(activeMode === 'user')}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20 }}>
+              <Ico.User />
+            </span>
+            <span>User</span>
+          </button>
+          
+          <button
+            onClick={() => { onSelectMode('prenotazioni'); setOpen(false); }}
+            className="cs-suggestion"
+            style={dropdownItemStyle(activeMode === 'prenotazioni')}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20 }}>
+              <Ico.Check />
+            </span>
+            <span>Prenotazioni</span>
+          </button>
+          
+          <button
+            onClick={() => { onSelectMode('settings'); setOpen(false); }}
+            className="cs-suggestion"
+            style={dropdownItemStyle(activeMode === 'settings')}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20 }}>
+              <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2"
+                strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            </span>
+            <span>Settings</span>
+          </button>
+        </div>
+      )}
+
+      {/* Squircle User Button */}
+      <button
+        className="cs-srch-squircle"
+        onClick={() => setOpen(!open)}
+        style={{
+          ...SQUIRCLE_BASE,
+          color: open || activeMode ? C.cyan : 'rgba(255,255,255,0.6)',
+          borderColor: open || activeMode ? C.cyan : 'rgba(255,255,255,0.12)',
+        }}
+        aria-label="Menu utente"
+      >
+        <Ico.User />
+      </button>
+    </div>
+  );
+}
+
+function dropdownItemStyle(active: boolean): CSSProperties {
+  return {
+    background: active ? 'rgba(0,229,255,0.08)' : 'transparent',
+    border: 'none',
+    borderRadius: 10,
+    padding: '10px 12px',
+    color: active ? C.cyan : 'rgba(255,255,255,0.8)',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+    textAlign: 'left',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+    fontFamily: FONT,
+  };
+}
+
+function UserPanel({
+  mode,
+  onDismiss,
+}: {
+  mode: 'user' | 'prenotazioni' | 'settings';
+  onDismiss: () => void;
+}) {
+  const title = {
+    user: 'User Profile',
+    prenotazioni: 'Le mie Prenotazioni',
+    settings: 'Settings',
+  }[mode];
+
+  const height = mode === 'user' ? '280px' : mode === 'settings' ? '290px' : '360px';
+
+  return (
+    <div style={{ width: '100%' }}>
+      <div
+        className="cs-pane-in"
+        style={{
+          fontFamily: FONT,
+          background: 'rgba(17,19,27,0.82)',
+          backdropFilter: 'blur(30px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+          border: '1px solid rgba(255,255,255,0.12)',
+          borderRadius: 24,
+          boxShadow: '0 28px 80px rgba(0,0,0,0.78), inset 0 1px 0 rgba(255,255,255,0.08)',
+          height,
+          maxHeight: 'calc(100vh - 120px)',
+          display: 'flex', flexDirection: 'column',
+          overflow: 'hidden',
+          transition: 'height 0.3s cubic-bezier(0.16,1,0.3,1)',
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          flexShrink: 0, display: 'flex', alignItems: 'center', gap: 11,
+          padding: '12px 13px',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+        }}>
+          <div className="cs-search-badge" style={{
+            width: 30, height: 30, borderRadius: 9, flexShrink: 0,
+            background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.14)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: C.cyan,
+          }}>
+            {mode === 'user' && <Ico.User />}
+            {mode === 'prenotazioni' && <Ico.Check />}
+            {mode === 'settings' && (
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            )}
+          </div>
+          <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: C.text }}>
+            {title}
+          </span>
+          <button
+            onClick={onDismiss}
+            className="cs-clear-btn"
+            style={{
+              background: 'rgba(255,255,255,0.06)', border: 'none', cursor: 'pointer',
+              width: 26, height: 26, borderRadius: 8,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: 'rgba(255,255,255,0.50)',
+            }}
+          >
+            <Ico.X />
+          </button>
+        </div>
+
+        {/* Scrollable Content */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '15px 14px 16px' }}>
+          {mode === 'user' && <UserProfileContent />}
+          {mode === 'prenotazioni' && <UserBookingsContent />}
+          {mode === 'settings' && <UserSettingsContent />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UserProfileContent() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Profile Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={{
+          width: 50, height: 50, borderRadius: 25,
+          background: 'linear-gradient(135deg, #00e5ff 0%, #0088ff 100%)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 4px 14px rgba(0,229,255,0.3)',
+        }}>
+          <span style={{ fontSize: 18, fontWeight: 800, color: '#04121a' }}>LB</span>
+        </div>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Luca Bottelli</div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>luca.bottelli@example.com</div>
+        </div>
+      </div>
+
+      <div style={{ height: 1, background: 'rgba(255,255,255,0.08)' }} />
+
+      {/* Info grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <div style={{
+          background: 'rgba(255,255,255,0.03)', padding: 10, borderRadius: 10,
+          border: '1px solid rgba(255,255,255,0.06)'
+        }}>
+          <div style={{ fontSize: 8, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>
+            Membership
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.cyan }}>Premium Explorer</div>
+        </div>
+
+        <div style={{
+          background: 'rgba(255,255,255,0.03)', padding: 10, borderRadius: 10,
+          border: '1px solid rgba(255,255,255,0.06)'
+        }}>
+          <div style={{ fontSize: 8, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>
+            Impatto Verde
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.green }}>-124.5 kg CO₂</div>
+        </div>
+      </div>
+
+      {/* Preferences Section */}
+      <div style={{ marginTop: 2 }}>
+        <div style={{ fontSize: 9, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+          Preferiti
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          <span style={{
+            fontSize: 10, background: 'rgba(255,255,255,0.06)', padding: '4px 8px',
+            borderRadius: 6, color: C.text, border: '1px solid rgba(255,255,255,0.08)'
+          }}>Treno Regionale</span>
+          <span style={{
+            fontSize: 10, background: 'rgba(255,255,255,0.06)', padding: '4px 8px',
+            borderRadius: 6, color: C.text, border: '1px solid rgba(255,255,255,0.08)'
+          }}>Parcheggio FS</span>
+          <span style={{
+            fontSize: 10, background: 'rgba(255,255,255,0.06)', padding: '4px 8px',
+            borderRadius: 6, color: C.text, border: '1px solid rgba(255,255,255,0.08)'
+          }}>Car sharing</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UserBookingsContent() {
+  const mockBookings = [
+    {
+      id: "R-7281",
+      title: "Treno Regionale RV3415",
+      route: "Rovereto ➔ Trento",
+      time: "21 Mag 2026 · 16:45",
+      status: "CONFERMATO",
+      statusColor: C.green,
+      type: "train"
+    },
+    {
+      id: "P-8831",
+      title: "Parcheggio Rovereto Centro",
+      route: "Stazione FS · Posto #14",
+      time: "21 Mag 2026 · 17:15",
+      status: "CONFERMATO",
+      statusColor: C.green,
+      type: "parking"
+    },
+    {
+      id: "T-0199",
+      title: "Servizio Taxi Rovereto",
+      route: "Corso Rosmini ➔ Rovereto FS",
+      time: "20 Mag 2026 · 11:20",
+      status: "COMPLETATO",
+      statusColor: C.muted,
+      type: "taxi"
+    }
+  ];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {mockBookings.map((b, idx) => (
+        <div
+          key={idx}
+          style={{
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 12,
+            padding: 10,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{
+                color: b.type === 'train' ? C.cyan : b.type === 'parking' ? C.green : C.yellow,
+                display: 'flex'
+              }}>
+                {b.type === 'train' && <Ico.Train />}
+                {b.type === 'parking' && <Ico.Parking />}
+                {b.type === 'taxi' && <Ico.Taxi />}
+              </span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: C.text }}>{b.title}</span>
+            </div>
+            <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{b.route}</div>
+            <div style={{ fontSize: 9, color: C.faint, marginTop: 1 }}>{b.time}</div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <span style={{
+              fontSize: 8, fontWeight: 800, color: b.statusColor,
+              background: b.statusColor + '15', border: `1px solid ${b.statusColor}35`,
+              padding: '2px 5px', borderRadius: 4, letterSpacing: '0.04em'
+            }}>
+              {b.status}
+            </span>
+            <div style={{ fontSize: 8, color: C.faint, marginTop: 4 }}>ID: {b.id}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function UserSettingsContent() {
+  const [pushEnabled, setPushEnabled] = useState(true);
+  const [gpsEnabled, setGpsEnabled] = useState(true);
+  const [lang, setLang] = useState('it');
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Option 1: Dark Mode */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.text }}>Modalità Scura</div>
+          <div style={{ fontSize: 9, color: C.muted, marginTop: 1 }}>Ottimizzata per schermi OLED</div>
+        </div>
+        <div style={{
+          width: 32, height: 18, borderRadius: 9, background: C.cyan,
+          display: 'flex', alignItems: 'center', padding: '0 2px',
+          justifyContent: 'flex-end', cursor: 'pointer'
+        }}>
+          <div style={{ width: 14, height: 14, borderRadius: 7, background: '#04121a' }} />
+        </div>
+      </div>
+
+      <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
+
+      {/* Option 2: Push Notifications */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.text }}>Notifiche Push</div>
+          <div style={{ fontSize: 9, color: C.muted, marginTop: 1 }}>Aggiornamenti su ritardi e tratte</div>
+        </div>
+        <div
+          onClick={() => setPushEnabled(!pushEnabled)}
+          style={{
+            width: 32, height: 18, borderRadius: 9,
+            background: pushEnabled ? C.cyan : 'rgba(255,255,255,0.15)',
+            display: 'flex', alignItems: 'center', padding: '0 2px',
+            justifyContent: pushEnabled ? 'flex-end' : 'flex-start',
+            cursor: 'pointer',
+            transition: 'background 0.2s'
+          }}
+        >
+          <div style={{ width: 14, height: 14, borderRadius: 7, background: '#04121a' }} />
+        </div>
+      </div>
+
+      <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
+
+      {/* Option 3: GPS Coordinates */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.text }}>Coordinate GPS reali</div>
+          <div style={{ fontSize: 9, color: C.muted, marginTop: 1 }}>Posizione live del dispositivo</div>
+        </div>
+        <div
+          onClick={() => setGpsEnabled(!gpsEnabled)}
+          style={{
+            width: 32, height: 18, borderRadius: 9,
+            background: gpsEnabled ? C.cyan : 'rgba(255,255,255,0.15)',
+            display: 'flex', alignItems: 'center', padding: '0 2px',
+            justifyContent: gpsEnabled ? 'flex-end' : 'flex-start',
+            cursor: 'pointer',
+            transition: 'background 0.2s'
+          }}
+        >
+          <div style={{ width: 14, height: 14, borderRadius: 7, background: '#04121a' }} />
+        </div>
+      </div>
+
+      <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
+
+      {/* Option 4: Language Selection */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.text }}>Lingua</div>
+          <div style={{ fontSize: 9, color: C.muted, marginTop: 1 }}>Seleziona la lingua dell'app</div>
+        </div>
+        <select
+          value={lang}
+          onChange={(e) => setLang(e.target.value)}
+          style={{
+            background: 'rgba(255,255,255,0.06)',
+            border: '1px solid rgba(255,255,255,0.14)',
+            borderRadius: 6,
+            color: C.text,
+            fontSize: 10,
+            fontWeight: 600,
+            padding: '3px 6px',
+            fontFamily: FONT,
+            outline: 'none',
+            cursor: 'pointer'
+          }}
+        >
+          <option value="it" style={{ background: '#11131b', color: C.text }}>Italiano</option>
+          <option value="en" style={{ background: '#11131b', color: C.text }}>English</option>
+        </select>
+      </div>
+    </div>
+  );
+}
+
 // ── Root export ───────────────────────────────────────────────────────────────
 
 // Trento city centre — origin fallback when the user hasn't shared a GPS fix.
@@ -1549,6 +2010,7 @@ export default function BookingSheet({
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [routeBookError, setRouteBookError] = useState<string | null>(null);
   const [routePanelCollapsed, setRoutePanelCollapsed] = useState(false);
+  const [userPanelMode, setUserPanelMode] = useState<'user' | 'prenotazioni' | 'settings' | null>(null);
   const lastNonce = useRef<number | null>(null);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1586,7 +2048,20 @@ export default function BookingSheet({
     setQuery('');
     onRoutePreview?.(null);
     onRouteFocusChange?.(false);
+    setUserPanelMode(null);
   }, [dismiss, resetRoute, onRoutePreview, onRouteFocusChange]);
+
+  const handleSelectUserPanelMode = useCallback((mode: 'user' | 'prenotazioni' | 'settings') => {
+    setUserPanelMode((prev) => {
+      if (prev === mode) return null;
+      dismiss();
+      resetRoute();
+      setSelectedRouteId(null);
+      setQuery('');
+      onRoutePreview?.(null);
+      return mode;
+    });
+  }, [dismiss, resetRoute, onRoutePreview]);
 
   const handleDismiss = useCallback(() => {
     setDismissing(true);
@@ -1610,6 +2085,7 @@ export default function BookingSheet({
     setRouteBookError(null);
     setRoutePanelCollapsed(false);
     onRouteFocusChange?.(false);
+    setUserPanelMode(null);            // close user panel if any
     if (!aiOrigin) onAIRequestLocation?.();
     fetchRoutes(aiOrigin ?? TRENTO_CENTER, { name: d });
   }, [aiOrigin, onAIRequestLocation, fetchRoutes, dismiss, onRouteFocusChange]);
@@ -1698,6 +2174,8 @@ export default function BookingSheet({
             <SearchBar onSearch={handleSearch} suggestions={suggestions} />
           )}
         </div>
+        {/* Mock User Dropdown Menu */}
+        <UserMenuDropdown onSelectMode={handleSelectUserPanelMode} activeMode={userPanelMode} />
       </div>
 
       {/* Sheet panel — offset left to align with the squircle gutter */}
@@ -1735,6 +2213,14 @@ export default function BookingSheet({
             onDismiss={handleDismiss}
             dismissing={dismissing}
             bookingError={routeBookError}
+          />
+        </div>
+      )}
+      {!aiActive && userPanelMode && (
+        <div style={{ marginLeft: 52 }}>
+          <UserPanel
+            mode={userPanelMode}
+            onDismiss={() => setUserPanelMode(null)}
           />
         </div>
       )}
