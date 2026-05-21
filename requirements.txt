@@ -1,4 +1,4 @@
-# Core scientific Python
+# Core data
 numpy
 pandas
 scipy
@@ -11,24 +11,12 @@ matplotlib
 seaborn
 plotly
 
-# Deep learning frameworks
-torch
-torchvision
-torchaudio
-tensorflow
-keras
-
 # LLM and AI tooling
 openai
 anthropic
-transformers
-datasets
-accelerate
-sentence-transformers
 langchain
 langchain-community
 langchain-openai
-huggingface-hub
 
 # APIs and demo apps
 fastapi
@@ -36,18 +24,18 @@ uvicorn[standard]
 streamlit
 gradio
 
-# Images and utilities
+# Utilities
 pillow
-opencv-python-headless
 python-dotenv
 pydantic
 pydantic-settings
 tqdm
 requests
 
-# Geospatial
+# Geospatial / fuzzy search
 pyproj
 shapely
+rapidfuzz
 
 # Development
 pytest
