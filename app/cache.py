@@ -1,5 +1,6 @@
 import time
 import uuid
+from typing import Optional
 
 _store: dict[str, tuple[dict, float]] = {}
 TTL = 300  # 5 minutes
@@ -11,7 +12,7 @@ def store_option(data: dict) -> str:
     return option_id
 
 
-def retrieve_option(option_id: str) -> dict | None:
+def retrieve_option(option_id: str) -> Optional[dict]:
     entry = _store.get(option_id)
     if not entry:
         return None
