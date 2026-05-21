@@ -24,6 +24,7 @@ interface Props {
   recenterNonce?: number;
   onLocate?: () => void;
   activeRoute?: RouteSuggestion | null;
+  routeFocusActive?: boolean;
   onOpenRouting?: () => void;
   routingPanelOpen?: boolean;
 }

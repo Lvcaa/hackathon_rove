@@ -31,6 +31,7 @@ export default function MapScreen() {
   } | null>(null);
   const [bookingTrigger, setBookingTrigger] = useState<{ destination: string; nonce: number } | null>(null);
   const [activeRoute, setActiveRoute] = useState<RouteSuggestion | null>(null);
+  const [routeFocusActive, setRouteFocusActive] = useState(false);
 
   // Build flat suggestion list for the SearchBar autocomplete from all mobility features
   const suggestions = useMemo<SuggestionItem[]>(() => {
@@ -73,7 +74,13 @@ export default function MapScreen() {
   const handleNavigate = useCallback((feature: MobilityFeature, category: CategoryKey) => {
     const p    = feature.properties;
     const name = String(p.descrizione || p.zona || p.nome || p.name || p.via || category);
+    setRouteFocusActive(false);
     setBookingTrigger((prev) => ({ destination: name, nonce: (prev?.nonce ?? 0) + 1 }));
+  }, []);
+
+  const handleRoutePreview = useCallback((route: RouteSuggestion | null) => {
+    setActiveRoute(route);
+    if (!route) setRouteFocusActive(false);
   }, []);
 
   const handleAIRequestLocation = useCallback(() => {
@@ -107,6 +114,7 @@ export default function MapScreen() {
           recenterNonce={recenterNonce}
           onLocate={handleLocate}
           activeRoute={activeRoute}
+          routeFocusActive={routeFocusActive}
         />
         <LayerTogglePanel
           visible={visibleCategories}
@@ -125,7 +133,8 @@ export default function MapScreen() {
           searchTrigger={bookingTrigger}
           suggestions={suggestions}
           aiOrigin={location}
-          onRoutePreview={setActiveRoute}
+          onRoutePreview={handleRoutePreview}
+          onRouteFocusChange={setRouteFocusActive}
           onAIRequestLocation={handleAIRequestLocation}
         />
       </View>

@@ -9,6 +9,7 @@ interface Props {
   suggestions?: { name: string; category?: 'stations' | 'taxi' | 'carsharing' | 'parking' }[];
   aiOrigin?: { lat: number; lng: number } | null;
   onRoutePreview?: (suggestion: RouteSuggestion | null) => void;
+  onRouteFocusChange?: (active: boolean) => void;
   onAIRequestLocation?: () => void;
 }
 

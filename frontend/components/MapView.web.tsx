@@ -32,6 +32,7 @@ interface Props {
   recenterNonce?: number;
   onLocate?: () => void;
   activeRoute?: RouteSuggestion | null;
+  routeFocusActive?: boolean;
   onOpenRouting?: () => void;
   routingPanelOpen?: boolean;
 }
@@ -1530,8 +1531,9 @@ export default function MapView({
   visibleCategories, selectedFeature,
   onFeatureSelect, onNavigate,
   userLocation, locationStatus = 'idle', recenterNonce = 0, onLocate,
-  activeRoute, onOpenRouting, routingPanelOpen = false,
+  activeRoute, routeFocusActive = false, onOpenRouting, routingPanelOpen = false,
 }: Props) {
+  const showMapIcons = !(routeFocusActive && activeRoute);
   const showUrbanStops = visibleCategories.has('busstops_urban');
   const showExtraStops = visibleCategories.has('busstops_extraurban');
   const showTrainStations = visibleCategories.has('trainstations');
@@ -1559,35 +1561,35 @@ export default function MapView({
           zoomOutText='<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
         />
 
-        {visibleCategories.has('stations') && (
+        {showMapIcons && visibleCategories.has('stations') && (
           <PointMarkers features={data.stations.features} category="stations" onSelect={onFeatureSelect} onNavigate={onNavigate} />
         )}
-        {visibleCategories.has('taxi') && (
+        {showMapIcons && visibleCategories.has('taxi') && (
           <PointMarkers features={data.taxi.features} category="taxi" onSelect={onFeatureSelect} onNavigate={onNavigate} />
         )}
-        {visibleCategories.has('carsharing') && (
+        {showMapIcons && visibleCategories.has('carsharing') && (
           <PointMarkers features={data.carsharing.features} category="carsharing" onSelect={onFeatureSelect} onNavigate={onNavigate} />
         )}
-        {visibleCategories.has('parking') && (
+        {showMapIcons && visibleCategories.has('parking') && (
           <ParkingZones features={data.parking.features} onSelect={onFeatureSelect} onNavigate={onNavigate} />
         )}
         {/* Bus stops live in their own pane above the overlay-pane (z 400) so
             the translucent parking polygons can't intercept stop clicks. */}
-        {(showUrbanStops || showExtraStops) && (
+        {showMapIcons && (showUrbanStops || showExtraStops) && (
           <Pane name="cs-bus-stops" style={{ zIndex: 550 }}>
             {showUrbanStops && <BusStopsLayer features={urbanStops} kind="urban" />}
             {showExtraStops && <BusStopsLayer features={extraStops} kind="extraurban" />}
           </Pane>
         )}
-        {visibleCategories.has('buses') && (
+        {showMapIcons && visibleCategories.has('buses') && (
           <LiveBusLayer vehicles={busVehicles} />
         )}
         {/* Railway track sits beneath the markers; shown with either rail layer. */}
-        {(showTrainStations || showTrains) && <RailLayer rail={rail} />}
-        {showTrainStations && (
+        {showMapIcons && (showTrainStations || showTrains) && <RailLayer rail={rail} />}
+        {showMapIcons && showTrainStations && (
           <TrainStationsLayer features={trainStations.features} />
         )}
-        {showTrains && (
+        {showMapIcons && showTrains && (
           <LiveTrainLayer trains={trainVehicles} />
         )}
         {userLocation && (

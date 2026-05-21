@@ -732,6 +732,62 @@ function DirectBookingStatus({ label }: { label: string }) {
   );
 }
 
+function CollapsedBookingHandle({
+  confirmation,
+  onExpand,
+}: {
+  confirmation: TripBookResponse;
+  onExpand: () => void;
+}) {
+  const bp = confirmation.boarding_pass;
+  const color = MODALITY_COLOR[bp.modality_type] ?? C.cyan;
+
+  return (
+    <button
+      className="cs-pane-in"
+      onClick={onExpand}
+      aria-label="Apri prenotazione"
+      style={{
+        width: '100%',
+        minHeight: 52,
+        borderRadius: 18,
+        border: `1px solid ${color}44`,
+        background: 'rgba(17,19,27,0.82)',
+        backdropFilter: 'blur(30px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+        boxShadow: '0 18px 52px rgba(0,0,0,0.62), inset 0 1px 0 rgba(255,255,255,0.08)',
+        color: C.text,
+        cursor: 'pointer',
+        fontFamily: FONT,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 11,
+        padding: '10px 13px',
+      }}
+    >
+      <span style={{
+        width: 32, height: 32, borderRadius: 11, flexShrink: 0,
+        background: color + '18', border: `1px solid ${color}40`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color,
+      }}>
+        <ModalityIcon type={bp.modality_type} />
+      </span>
+      <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+        <span style={{ display: 'block', fontSize: 9, color, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+          Biglietto confermato
+        </span>
+        <span style={{ display: 'block', marginTop: 2, fontSize: 13, color: C.text, fontWeight: 750, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+          {bp.destination}
+        </span>
+      </span>
+      <span style={{ color, display: 'flex', transform: 'rotate(-90deg)' }}>
+        <Ico.ArrowRight />
+      </span>
+    </button>
+  );
+}
+
 // ── Boarding pass view ────────────────────────────────────────────────────────
 
 function InfoRow({ label, value, color }: { label: string; value: string; color: string }) {
@@ -1472,13 +1528,15 @@ interface Props {
   aiOrigin?: { lat: number; lng: number } | null;
   /** Fired with the itinerary currently in view — draw it on the map. */
   onRoutePreview?: (suggestion: RouteSuggestion | null) => void;
+  /** Toggles map chrome/markers so the booked route can take visual priority. */
+  onRouteFocusChange?: (active: boolean) => void;
   /** Ask the host to start geolocation. */
   onAIRequestLocation?: () => void;
 }
 
 export default function BookingSheet({
   onRouteReady, searchTrigger, suggestions,
-  aiOrigin, onRoutePreview, onAIRequestLocation,
+  aiOrigin, onRoutePreview, onRouteFocusChange, onAIRequestLocation,
 }: Props) {
   const { state, book, bookDestination, dismiss } = useBooking();
   const {
@@ -1490,6 +1548,7 @@ export default function BookingSheet({
   const [aiActive, setAiActive] = useState(false);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [routeBookError, setRouteBookError] = useState<string | null>(null);
+  const [routePanelCollapsed, setRoutePanelCollapsed] = useState(false);
   const lastNonce = useRef<number | null>(null);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1523,9 +1582,11 @@ export default function BookingSheet({
     resetRoute();
     setSelectedRouteId(null);
     setRouteBookError(null);
+    setRoutePanelCollapsed(false);
     setQuery('');
     onRoutePreview?.(null);
-  }, [dismiss, resetRoute, onRoutePreview]);
+    onRouteFocusChange?.(false);
+  }, [dismiss, resetRoute, onRoutePreview, onRouteFocusChange]);
 
   const handleDismiss = useCallback(() => {
     setDismissing(true);
@@ -1547,9 +1608,11 @@ export default function BookingSheet({
     dismiss();                         // drop any booking in progress
     setSelectedRouteId(null);
     setRouteBookError(null);
+    setRoutePanelCollapsed(false);
+    onRouteFocusChange?.(false);
     if (!aiOrigin) onAIRequestLocation?.();
     fetchRoutes(aiOrigin ?? TRENTO_CENTER, { name: d });
-  }, [aiOrigin, onAIRequestLocation, fetchRoutes, dismiss]);
+  }, [aiOrigin, onAIRequestLocation, fetchRoutes, dismiss, onRouteFocusChange]);
 
   // Auto-trigger from a map "Naviga →" click.
   useEffect(() => {
@@ -1574,13 +1637,15 @@ export default function BookingSheet({
     const route = routeFromBoardingPass(confirmation);
     if (!route) return;
     onRoutePreview?.(route);
+    onRouteFocusChange?.(true);
+    setRoutePanelCollapsed(true);
 
     const bp = confirmation.boarding_pass;
     onRouteReady?.(
       bp.route_waypoints as [number, number][],
       bp.destination_coords as [number, number],
     );
-  }, [onRoutePreview, onRouteReady]);
+  }, [onRoutePreview, onRouteReady, onRouteFocusChange]);
 
   // "Prenota" on a routing itinerary → hand the destination to the booking flow.
   const handleBookItinerary = useCallback(async () => {
@@ -1594,13 +1659,15 @@ export default function BookingSheet({
     }
 
     setRouteBookError(null);
+    setRoutePanelCollapsed(false);
+    onRouteFocusChange?.(false);
     setQuery(destName);
     try {
       await bookDestination(destName, modality, selectedRoute.label);
     } catch (err) {
       setRouteBookError(String(err));
     }
-  }, [bookDestination, routeResponse, selectedRoute]);
+  }, [bookDestination, routeResponse, selectedRoute, onRouteFocusChange]);
 
   const bookingActive = state.phase !== 'idle';
   const routingActive = routeStatus !== 'idle';
@@ -1636,14 +1703,21 @@ export default function BookingSheet({
       {/* Sheet panel — offset left to align with the squircle gutter */}
       {!aiActive && bookingActive && (
         <div style={{ marginLeft: 52 }}>
-          <SheetPanel
-            state={state}
-            query={query}
-            onBook={book}
-            onNavigateToBookedRoute={handleNavigateToBookedRoute}
-            onDismiss={handleDismiss}
-            dismissing={dismissing}
-          />
+          {routePanelCollapsed && state.phase === 'confirmed' && state.confirmation ? (
+            <CollapsedBookingHandle
+              confirmation={state.confirmation}
+              onExpand={() => setRoutePanelCollapsed(false)}
+            />
+          ) : (
+            <SheetPanel
+              state={state}
+              query={query}
+              onBook={book}
+              onNavigateToBookedRoute={handleNavigateToBookedRoute}
+              onDismiss={handleDismiss}
+              dismissing={dismissing}
+            />
+          )}
         </div>
       )}
       {!aiActive && !bookingActive && routingActive && (
