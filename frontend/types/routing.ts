@@ -1,0 +1,46 @@
+// ── Multimodal routing — mirrors POST /api/routing/suggest ────────────────────
+
+export type LegMode = 'walk' | 'bus' | 'drive' | 'taxi';
+
+export interface RoutePoint {
+  name: string;
+  lat: number;
+  lng: number;
+}
+
+export interface RouteLeg {
+  mode: LegMode;
+  from: RoutePoint;
+  to: RoutePoint;
+  distance_m: number;
+  duration_min: number;
+  polyline: [number, number][];   // [lng, lat] pairs
+}
+
+export interface RouteSuggestion {
+  id: string;
+  label: string;
+  icon: string;
+  summary: string;
+  total_distance_m: number;
+  total_duration_min: number;
+  cost_eur: number;
+  legs: RouteLeg[];
+  recommended: boolean;
+  cheapest: boolean;
+}
+
+export interface RouteResponse {
+  origin: RoutePoint;
+  destination: RoutePoint;
+  straight_line_m: number;
+  suggestions: RouteSuggestion[];
+}
+
+// Per-mode display tokens, shared by the routing panel and the map route layer.
+export const MODE_META: Record<LegMode, { color: string; icon: string; label: string }> = {
+  walk:  { color: '#9ca3af', icon: '🚶', label: 'A piedi' },
+  bus:   { color: '#76b82a', icon: '🚌', label: 'Bus' },
+  drive: { color: '#3b82f6', icon: '🚗', label: 'Auto' },
+  taxi:  { color: '#fbbf24', icon: '🚕', label: 'Taxi' },
+};

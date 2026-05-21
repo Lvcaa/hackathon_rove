@@ -5,6 +5,7 @@ import {
   MobilityData, MobilityFeature, MobilityCollection, CategoryKey, BusVehicle,
 } from '../types/mobility';
 import { LiveLocation, LocationStatus } from '../hooks/useLiveLocation';
+import { RouteSuggestion } from '../types/routing';
 
 interface Props {
   data: MobilityData;
@@ -18,6 +19,7 @@ interface Props {
   locationStatus?: LocationStatus;
   recenterNonce?: number;
   onLocate?: () => void;
+  activeRoute?: RouteSuggestion | null;
 }
 
 export default function MapView({ data, visibleCategories }: Props) {

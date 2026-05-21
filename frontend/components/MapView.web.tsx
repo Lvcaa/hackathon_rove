@@ -10,6 +10,7 @@ import {
   BusVehicle, BusKind, StopSchedule, Departure,
 } from '../types/mobility';
 import { LiveLocation, LocationStatus } from '../hooks/useLiveLocation';
+import { RouteSuggestion, MODE_META } from '../types/routing';
 import { CategoryColors, CategoryIcons, CategoryLabels } from '../constants/colors';
 
 interface Props {
@@ -24,6 +25,7 @@ interface Props {
   locationStatus?: LocationStatus;
   recenterNonce?: number;
   onLocate?: () => void;
+  activeRoute?: RouteSuggestion | null;
 }
 
 const TILE_URL = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
@@ -877,12 +879,113 @@ function LocateButton({ status, onPress }: {
   );
 }
 
+// ── Multimodal route overlay ────────────────────────────────────────────────────
+
+function createDestIcon() {
+  return L.divIcon({
+    className: '',
+    html: `<div style="position:relative;width:30px;height:38px;">
+      <div style="
+        position:absolute;left:3px;top:0;width:24px;height:24px;
+        background:#ec4899;border:2.5px solid #fff;
+        border-radius:50% 50% 50% 0;transform:rotate(-45deg);
+        box-shadow:0 4px 12px rgba(0,0,0,0.6);
+      "></div>
+      <div style="
+        position:absolute;left:11px;top:8px;width:8px;height:8px;
+        background:#fff;border-radius:50%;
+      "></div>
+    </div>`,
+    iconSize: [30, 38],
+    iconAnchor: [15, 32],
+    popupAnchor: [0, -34],
+  });
+}
+
+// Frames the whole itinerary in view, leaving room for the routing panel
+// that sits over the top-left of the map.
+function FitRoute({ route }: { route: RouteSuggestion }) {
+  const map = useMap();
+  useEffect(() => {
+    const pts: [number, number][] = [];
+    for (const leg of route.legs) {
+      for (const [lng, lat] of leg.polyline) pts.push([lat, lng]);
+    }
+    if (pts.length >= 2) {
+      map.fitBounds(pts, {
+        paddingTopLeft: [388, 80],
+        paddingBottomRight: [80, 110],
+        maxZoom: 16,
+      });
+    }
+  }, [route, map]);
+  return null;
+}
+
+// Draws the selected itinerary: one polyline per leg (walking legs dotted),
+// a white transfer dot at each mode change, and a pin at the destination.
+function RouteLayer({ route }: { route: RouteSuggestion }) {
+  const dest = route.legs[route.legs.length - 1]?.to;
+  const destIcon = useMemo(createDestIcon, []);
+  if (!dest) return null;
+
+  return (
+    <>
+      <FitRoute route={route} />
+      <Pane name="cs-trip-route" style={{ zIndex: 545 }}>
+        {route.legs.map((leg, i) => {
+          const pts = leg.polyline.map(([lng, lat]) => [lat, lng] as [number, number]);
+          const color = MODE_META[leg.mode].color;
+          return (
+            <React.Fragment key={i}>
+              <Polyline
+                positions={pts}
+                pane="cs-trip-route"
+                interactive={false}
+                pathOptions={{ color, weight: 10, opacity: 0.16 }}
+              />
+              <Polyline
+                positions={pts}
+                pane="cs-trip-route"
+                interactive={false}
+                pathOptions={{
+                  color,
+                  weight: 4.5,
+                  opacity: 0.95,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                  dashArray: leg.mode === 'walk' ? '1 9' : undefined,
+                }}
+              />
+            </React.Fragment>
+          );
+        })}
+        {route.legs.slice(0, -1).map((leg, i) => (
+          <CircleMarker
+            key={`xfer-${i}`}
+            center={[leg.to.lat, leg.to.lng]}
+            radius={5.5}
+            pane="cs-trip-route"
+            interactive={false}
+            pathOptions={{
+              fillColor: '#fff', fillOpacity: 1,
+              color: MODE_META[leg.mode].color, weight: 3,
+            }}
+          />
+        ))}
+      </Pane>
+      <Marker position={[dest.lat, dest.lng]} icon={destIcon} interactive={false} />
+    </>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function MapView({
   data, busStops, busVehicles, visibleCategories, selectedFeature,
   onFeatureSelect, onNavigate,
   userLocation, locationStatus = 'idle', recenterNonce = 0, onLocate,
+  activeRoute,
 }: Props) {
   const showUrbanStops = visibleCategories.has('busstops_urban');
   const showExtraStops = visibleCategories.has('busstops_extraurban');
@@ -930,6 +1033,7 @@ export default function MapView({
         {userLocation && (
           <UserLocationLayer location={userLocation} recenterNonce={recenterNonce} />
         )}
+        {activeRoute && <RouteLayer route={activeRoute} />}
       </MapContainer>
       {onLocate && <LocateButton status={locationStatus} onPress={onLocate} />}
     </View>
