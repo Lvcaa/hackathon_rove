@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import {
   MapContainer, TileLayer, Marker, CircleMarker,
@@ -53,12 +53,16 @@ function injectStyles() {
     html, body { margin:0; padding:0; }
     .leaflet-container { background:#0d1117 !important; font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif; }
 
+    /* Popups always sit on the very top pane, above buses and stops. */
+    .leaflet-popup-pane { z-index: 9999 !important; }
+
+    /* Frosted-glass popup card — translucent so the map shows through. */
     .leaflet-popup-content-wrapper {
-      background:rgba(13,13,15,0.97) !important;
-      backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
-      border:1px solid rgba(255,255,255,0.1) !important;
+      background:rgba(16,17,23,0.62) !important;
+      backdrop-filter:blur(28px) saturate(180%); -webkit-backdrop-filter:blur(28px) saturate(180%);
+      border:1px solid rgba(255,255,255,0.16) !important;
       border-radius:16px !important;
-      box-shadow:0 16px 48px rgba(0,0,0,0.8) !important;
+      box-shadow:0 16px 48px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.12) !important;
       padding:0 !important; color:#fff !important; min-width:200px;
     }
     .leaflet-popup-content { margin:0 !important; color:#fff !important; }
@@ -481,7 +485,13 @@ function BusStopMarker({ feature }: { feature: MobilityFeature }) {
         },
       }}
     >
-      <Popup closeButton minWidth={250}>
+      <Popup
+        closeButton
+        minWidth={250}
+        pane="popupPane"
+        autoPanPaddingTopLeft={[238, 16]}
+        autoPanPaddingBottomRight={[150, 16]}
+      >
         <BusStopPopup
           feature={feature}
           schedule={schedule}
@@ -494,10 +504,104 @@ function BusStopMarker({ feature }: { feature: MobilityFeature }) {
   );
 }
 
-function BusStopsLayer({ features }: { features: MobilityFeature[] }) {
+// ── Bus stop clustering + viewport culling ──────────────────────────────────────
+
+const STOP_INDIVIDUAL_ZOOM = 15;  // at/above this zoom every visible stop is shown
+const CLUSTER_CELL_PX = 70;       // grid cell size (screen px) used to group stops
+const VIEWPORT_PAD = 0.3;         // render this far beyond the viewport for smooth pans
+
+// Re-renders its consumer whenever the map finishes moving or zooming.
+function useMapViewport() {
+  const map = useMap();
+  const [view, setView] = useState(() => ({ bounds: map.getBounds(), zoom: map.getZoom() }));
+  useEffect(() => {
+    const update = () => setView({ bounds: map.getBounds(), zoom: map.getZoom() });
+    map.on('moveend zoomend', update);
+    return () => { map.off('moveend zoomend', update); };
+  }, [map]);
+  return view;
+}
+
+function clusterIcon(count: number, kind: BusKind) {
+  const color = busColor(kind);
+  const size = count < 10 ? 30 : count < 50 ? 38 : count < 200 ? 46 : 54;
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      width:${size}px;height:${size}px;border-radius:50%;
+      background:${color}d9;border:2px solid ${color};
+      box-shadow:0 0 16px ${color}55,0 2px 10px rgba(0,0,0,0.6);
+      display:flex;align-items:center;justify-content:center;
+      color:#fff;font-weight:800;font-size:12px;cursor:pointer;
+    ">${count}</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
+
+interface Cluster { lat: number; lng: number; count: number; }
+
+// Viewport-culled, grid-clustered bus stops: off-screen stops are skipped, and
+// when zoomed out nearby stops collapse into a single counted bubble — so the
+// DOM stays small no matter how many stops the dataset contains.
+function BusStopsLayer({ features, kind }: { features: MobilityFeature[]; kind: BusKind }) {
+  const map = useMap();
+  const { bounds, zoom } = useMapViewport();
+
+  const { individuals, clusters } = useMemo(() => {
+    const padded = bounds.pad(VIEWPORT_PAD);
+    const visible = features.filter((f) => {
+      const c = f.geometry.coordinates as number[];
+      return padded.contains([c[1], c[0]]);
+    });
+
+    if (zoom >= STOP_INDIVIDUAL_ZOOM) {
+      return { individuals: visible, clusters: [] as Cluster[] };
+    }
+
+    // Bucket visible stops into a fixed pixel grid at the current zoom.
+    const cells = new Map<string, MobilityFeature[]>();
+    for (const f of visible) {
+      const c = f.geometry.coordinates as number[];
+      const p = map.project([c[1], c[0]], zoom);
+      const key = `${Math.floor(p.x / CLUSTER_CELL_PX)}:${Math.floor(p.y / CLUSTER_CELL_PX)}`;
+      const cell = cells.get(key);
+      if (cell) cell.push(f);
+      else cells.set(key, [f]);
+    }
+
+    const individuals: MobilityFeature[] = [];
+    const clusters: Cluster[] = [];
+    for (const group of cells.values()) {
+      if (group.length === 1) {
+        individuals.push(group[0]);
+        continue;
+      }
+      let lat = 0, lng = 0;
+      for (const f of group) {
+        const c = f.geometry.coordinates as number[];
+        lat += c[1];
+        lng += c[0];
+      }
+      clusters.push({ lat: lat / group.length, lng: lng / group.length, count: group.length });
+    }
+    return { individuals, clusters };
+  }, [features, bounds, zoom, map]);
+
   return (
     <>
-      {features.map((f, i) => (
+      {clusters.map((cl) => (
+        <Marker
+          key={`${cl.lat.toFixed(5)}:${cl.lng.toFixed(5)}`}
+          position={[cl.lat, cl.lng]}
+          icon={clusterIcon(cl.count, kind)}
+          pane="cs-bus-stops"
+          eventHandlers={{
+            click: () => map.flyTo([cl.lat, cl.lng], Math.min(zoom + 2, STOP_INDIVIDUAL_ZOOM)),
+          }}
+        />
+      ))}
+      {individuals.map((f, i) => (
         <BusStopMarker key={String(f.properties.stop_id ?? i)} feature={f} />
       ))}
     </>
@@ -538,12 +642,16 @@ function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
 export default function MapView({ data, busStops, busVehicles, visibleCategories, selectedFeature, onFeatureSelect }: Props) {
   const showUrbanStops = visibleCategories.has('busstops_urban');
   const showExtraStops = visibleCategories.has('busstops_extraurban');
-  const urbanStops = showUrbanStops
-    ? busStops.features.filter((f) => stopKind(f) === 'urban')
-    : [];
-  const extraStops = showExtraStops
-    ? busStops.features.filter((f) => stopKind(f) === 'extraurban')
-    : [];
+  // Memoised so the array identity is stable across the 3 s bus refreshes —
+  // otherwise BusStopsLayer would re-cluster (and remount markers) every tick.
+  const urbanStops = useMemo(
+    () => (showUrbanStops ? busStops.features.filter((f) => stopKind(f) === 'urban') : []),
+    [busStops, showUrbanStops],
+  );
+  const extraStops = useMemo(
+    () => (showExtraStops ? busStops.features.filter((f) => stopKind(f) === 'extraurban') : []),
+    [busStops, showExtraStops],
+  );
 
   return (
     <View style={styles.container}>
@@ -568,8 +676,8 @@ export default function MapView({ data, busStops, busVehicles, visibleCategories
             the translucent parking polygons can't intercept stop clicks. */}
         {(showUrbanStops || showExtraStops) && (
           <Pane name="cs-bus-stops" style={{ zIndex: 550 }}>
-            {showUrbanStops && <BusStopsLayer features={urbanStops} />}
-            {showExtraStops && <BusStopsLayer features={extraStops} />}
+            {showUrbanStops && <BusStopsLayer features={urbanStops} kind="urban" />}
+            {showExtraStops && <BusStopsLayer features={extraStops} kind="extraurban" />}
           </Pane>
         )}
         {visibleCategories.has('buses') && (
