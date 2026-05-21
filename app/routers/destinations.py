@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from rapidfuzz import fuzz, process
+from rapidfuzz import fuzz, process, utils as fuzz_utils
 
 from app.database import get_db
 
@@ -15,7 +15,13 @@ def search_destinations(q: str):
         return {"results": []}
 
     choices = {row["id"]: row["name"] for row in rows}
-    matches = process.extract(q, choices, scorer=fuzz.WRatio, limit=5, score_cutoff=30)
+    matches = process.extract(
+        q, choices,
+        scorer=fuzz.WRatio,
+        processor=fuzz_utils.default_process,
+        limit=5,
+        score_cutoff=30,
+    )
     matched_ids = {key for _, _, key in matches}
 
     return {

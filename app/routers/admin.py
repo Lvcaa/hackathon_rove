@@ -17,7 +17,7 @@ _DISTRESS_THRESHOLD = 0.2
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-def _admin_html(stats: dict) -> str:
+def _admin_html(stats: dict, zones: list) -> str:
     cards = [
         ("Stazioni", stats["stations"], "#00e5ff"),
         ("Taxi", stats["taxi"], "#fbbf24"),
@@ -33,11 +33,44 @@ def _admin_html(stats: dict) -> str:
         """
         for label, value, color in cards
     )
+
+    def _bar_color(z: dict) -> str:
+        if z["max_capacity"] == 0:
+            return "#4b5563"
+        if z["distress"]:
+            return "#ef4444"
+        if z["occupancy_pct"] >= 70:
+            return "#f59e0b"
+        return "#34d399"
+
+    def _badge(z: dict) -> str:
+        if z["max_capacity"] == 0:
+            return '<span class="badge badge-grey">N/D</span>'
+        if z["available_spots"] == 0:
+            return '<span class="badge badge-red">PIENO</span>'
+        if z["distress"]:
+            return '<span class="badge badge-orange">CRITICO</span>'
+        return '<span class="badge badge-green">OK</span>'
+
+    zone_rows = "".join(
+        f"""<tr>
+          <td>{z['name']}</td>
+          <td>{z['available_spots'] if z['max_capacity'] > 0 else '—'} / {z['max_capacity'] if z['max_capacity'] > 0 else '—'}</td>
+          <td>
+            <div class="bar-wrap"><div class="bar" style="width:{z['occupancy_pct']}%;background:{_bar_color(z)}"></div></div>
+            <span class="pct">{z['occupancy_pct']}%</span>
+          </td>
+          <td>{_badge(z)}</td>
+        </tr>"""
+        for z in zones
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="it">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="refresh" content="15" />
   <title>CommuteSync Admin</title>
   <style>
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -49,6 +82,7 @@ def _admin_html(stats: dict) -> str:
       padding: 2rem;
     }}
     h1 {{ font-size: 1.75rem; font-weight: 800; margin-bottom: 0.25rem; }}
+    h2 {{ font-size: 1.1rem; font-weight: 700; margin: 2rem 0 1rem; color: #d1d5db; }}
     .subtitle {{ color: #9ca3af; margin-bottom: 2rem; font-size: 0.95rem; }}
     .grid {{
       display: grid;
@@ -65,12 +99,34 @@ def _admin_html(stats: dict) -> str:
     }}
     .label {{ color: #9ca3af; font-size: 0.85rem; margin-bottom: 0.5rem; }}
     .value {{ font-size: 2.5rem; font-weight: 800; color: var(--accent); }}
+    table {{
+      width: 100%;
+      max-width: 960px;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }}
+    th, td {{ padding: 0.6rem 0.75rem; text-align: left; border-bottom: 1px solid #2a2a2a; }}
+    th {{ color: #9ca3af; font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }}
+    tr:last-child td {{ border-bottom: none; }}
+    .bar-wrap {{ display: inline-block; width: 80px; height: 6px; background: #2a2a2a; border-radius: 3px; vertical-align: middle; margin-right: 6px; }}
+    .bar {{ height: 6px; border-radius: 3px; transition: width 0.3s; }}
+    .pct {{ font-size: 0.8rem; color: #9ca3af; }}
+    .badge {{ display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }}
+    .badge-green {{ background: #064e3b; color: #34d399; }}
+    .badge-orange {{ background: #451a03; color: #f59e0b; }}
+    .badge-red {{ background: #450a0a; color: #ef4444; }}
+    .badge-grey {{ background: #1f2937; color: #9ca3af; }}
   </style>
 </head>
 <body>
   <h1>CommuteSync</h1>
-  <p class="subtitle">Pannello amministratore</p>
+  <p class="subtitle">Pannello amministratore · aggiornamento automatico ogni 15s</p>
   <section class="grid">{card_html}</section>
+  <h2>Occupazione parcheggi in tempo reale</h2>
+  <table>
+    <thead><tr><th>Zona</th><th>Disponibili</th><th>Occupazione</th><th>Stato</th></tr></thead>
+    <tbody>{zone_rows}</tbody>
+  </table>
 </body>
 </html>"""
 
@@ -78,7 +134,8 @@ def _admin_html(stats: dict) -> str:
 @router.get("", response_class=HTMLResponse)
 def admin_panel(_username: str = Depends(verify_admin)) -> HTMLResponse:
     """Admin dashboard (requires HTTP Basic auth)."""
-    return HTMLResponse(_admin_html(get_stats()))
+    zones = dashboard(_username=_username)["zones"]
+    return HTMLResponse(_admin_html(get_stats(), zones))
 
 
 @router.get("/stats")
