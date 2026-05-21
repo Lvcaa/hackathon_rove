@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { RouteSuggestion, MODE_META } from '../types/routing';
 import { useAIPlanner } from '../hooks/useAIPlanner';
+import { AI_PROMPT_PRESETS } from '../constants/aiPresets';
 
 const FONT = "'Inter', 'SF Pro Display', system-ui, sans-serif";
 const C = {
@@ -39,6 +40,24 @@ function injectStyles() {
     .aip-step { animation:aip-in 0.3s ease forwards; }
     .aip-chip { transition:background 0.13s ease,border-color 0.13s ease; }
     .aip-chip:hover { background:rgba(0,229,255,0.14) !important; border-color:rgba(0,229,255,0.5) !important; }
+
+    /* Rotating placeholder prompt: a soft gradient mask sweeps left-to-right.
+       One continuous pass reveals the phrase (left edge first), holds it, then
+       wipes it away (left edge first) — same direction throughout. The text is
+       swapped while fully wiped out, so the next phrase then appears with the
+       same left-to-right wipe. */
+    @keyframes aip-preset {
+      from { -webkit-mask-position: 100% 0; mask-position: 100% 0; }
+      to   { -webkit-mask-position: 0% 0;   mask-position: 0% 0; }
+    }
+    .aip-preset-text {
+      -webkit-mask-image: linear-gradient(to right, transparent 14%, #000 27%, #000 73%, transparent 86%);
+      mask-image: linear-gradient(to right, transparent 14%, #000 27%, #000 73%, transparent 86%);
+      -webkit-mask-size: 600% 100%; mask-size: 600% 100%;
+      -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+      animation: aip-preset 4s linear forwards;
+      will-change: -webkit-mask-position, mask-position;
+    }
   `;
   document.head.appendChild(s);
 }
@@ -116,6 +135,10 @@ function Chips({ items, onPick }: {
 
 export default function AIPlannerPanel({ origin, onPlanReady, onClear, onRequestLocation }: Props) {
   const [input, setInput] = useState('');
+  const [focused, setFocused] = useState(false);
+  const [presetIdx, setPresetIdx] = useState(
+    () => Math.floor(Math.random() * AI_PROMPT_PRESETS.length),
+  );
   const inputRef = useRef<HTMLInputElement>(null);
   const { state, plan, reset } = useAIPlanner();
 
@@ -125,6 +148,17 @@ export default function AIPlannerPanel({ origin, onPlanReady, onClear, onRequest
   useEffect(() => {
     if (state.phase === 'ready' && state.chosen) onPlanReady(state.chosen);
   }, [state.phase, state.chosen, onPlanReady]);
+
+  // The placeholder cycles through example prompts only while the field is
+  // idle, empty and unfocused — clicking in to type pauses it immediately.
+  const rotating = state.phase === 'idle' && !focused && input === '';
+  useEffect(() => {
+    if (!rotating) return;
+    const id = window.setInterval(() => {
+      setPresetIdx((i) => (i + 1) % AI_PROMPT_PRESETS.length);
+    }, 4000);
+    return () => window.clearInterval(id);
+  }, [rotating]);
 
   const submit = (text: string) => {
     const trimmed = text.trim();
@@ -142,17 +176,20 @@ export default function AIPlannerPanel({ origin, onPlanReady, onClear, onRequest
   const isInput = state.phase === 'idle' || state.phase === 'error';
 
   return (
-    <div style={PANEL}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: isInput ? 9 : 8 }}>
-        <span style={{ fontSize: 14, color: C.cyan }}>✦</span>
-        <span style={{
-          fontSize: 10.5, fontWeight: 800, color: C.cyan,
-          letterSpacing: '0.12em', textTransform: 'uppercase',
-        }}>
-          AI Planner
-        </span>
-        {state.phase !== 'idle' && (
+    <div style={{
+      ...PANEL,
+      ...(state.phase === 'idle' && { padding: 0, overflow: 'hidden' }),
+    }}>
+      {/* Header — all non-idle states */}
+      {state.phase !== 'idle' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
+          <span style={{ fontSize: 14, color: C.cyan }}>✦</span>
+          <span style={{
+            fontSize: 10.5, fontWeight: 800, color: C.cyan,
+            letterSpacing: '0.12em', textTransform: 'uppercase',
+          }}>
+            AI Planner
+          </span>
           <button
             onClick={handleReset}
             style={{
@@ -162,54 +199,96 @@ export default function AIPlannerPanel({ origin, onPlanReady, onClear, onRequest
           >
             ✕ nuovo
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Input — shown while idle or after an error */}
-      {isInput && (
-        <>
-          <div style={{ display: 'flex', gap: 8 }}>
+      {/* IDLE: matches search bar layout exactly — transparent input, full-height button */}
+      {state.phase === 'idle' && (
+        <div style={{ display: 'flex', alignItems: 'stretch' }}>
+          {/* Left: badge + transparent input */}
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 11, padding: '14px 0 14px 14px' }}>
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0 }}>
+              <path d="M7.5 1.5L8.75 6.25L13.5 7.5L8.75 8.75L7.5 13.5L6.25 8.75L1.5 7.5L6.25 6.25Z" fill="#00e5ff"/>
+            </svg>
+            <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
+              <input
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') submit(input); }}
+                onFocus={() => setFocused(true)}
+                onBlur={() => setFocused(false)}
+                placeholder={rotating ? '' : 'Scrivi dove vuoi andare…'}
+                style={{
+                  width: '100%', background: 'transparent', border: 'none',
+                  color: C.text, fontSize: 15, fontWeight: 500,
+                  fontFamily: FONT, outline: 'none', letterSpacing: '-0.01em',
+                }}
+              />
+              {rotating && (
+                <div
+                  aria-hidden
+                  style={{
+                    position: 'absolute', inset: 0, display: 'flex',
+                    alignItems: 'center', pointerEvents: 'none', overflow: 'hidden',
+                  }}
+                >
+                  <span
+                    key={presetIdx}
+                    className="aip-preset-text"
+                    style={{
+                      display: 'block', fontSize: 15, color: C.muted,
+                      fontFamily: FONT, whiteSpace: 'nowrap', letterSpacing: '-0.01em',
+                    }}
+                  >
+                    {AI_PROMPT_PRESETS[presetIdx]}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+          {/* Full-height submit button — clipped to panel border-radius by overflow:hidden */}
+          <button
+            onClick={() => submit(input)}
+            style={{
+              background: C.cyan, color: '#04121a', border: 'none',
+              padding: '0 18px', fontSize: 16, fontWeight: 800,
+              cursor: 'pointer', fontFamily: FONT, flexShrink: 0,
+            }}
+          >
+            →
+          </button>
+        </div>
+      )}
+
+      {/* ERROR: header shown above, standard input row */}
+      {state.phase === 'error' && (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ position: 'relative', flex: 1 }}>
             <input
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') submit(input); }}
-              placeholder="Dimmi dove vuoi andare…"
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              placeholder="Scrivi dove vuoi andare…"
               style={{
-                flex: 1, background: C.surface,
+                width: '100%', boxSizing: 'border-box', background: C.surface,
                 border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10,
                 padding: '9px 12px', fontSize: 13, color: C.text,
                 fontFamily: FONT, outline: 'none',
               }}
             />
-            <button
-              onClick={() => submit(input)}
-              style={{
-                background: C.cyan, color: '#04121a', border: 'none', borderRadius: 10,
-                padding: '0 15px', fontSize: 15, fontWeight: 800, cursor: 'pointer',
-              }}
-            >
-              →
-            </button>
           </div>
-
-          {state.phase === 'idle' && (
-            <>
-              <p style={{ fontSize: 10.5, color: C.muted, margin: '8px 2px 0', fontWeight: 600 }}>
-                Prova una di queste richieste:
-              </p>
-              <Chips
-                items={[
-                  'Portami alla stazione di Trento in autobus',
-                  'Come arrivo al MART a piedi',
-                  'Taxi per l’ospedale Santa Chiara',
-                ]}
-
-                onPick={(v) => { setInput(v); submit(v); }}
-              />
-            </>
-          )}
-        </>
+          <button
+            onClick={() => submit(input)}
+            style={{
+              background: C.cyan, color: '#04121a', border: 'none', borderRadius: 10,
+              padding: '0 15px', fontSize: 15, fontWeight: 800, cursor: 'pointer',
+            }}
+          >→</button>
+        </div>
       )}
 
       {/* Thinking */}

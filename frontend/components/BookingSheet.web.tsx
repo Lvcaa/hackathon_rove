@@ -14,14 +14,14 @@ function injectStyles() {
   const s = document.createElement('style');
   s.id = 'cs-booking-styles';
   s.textContent = `
-    /* Pane grows downward out of the search bar. */
+    /* Pane grows upward out of the search bar. */
     @keyframes cs-pane-in {
-      from { opacity: 0; transform: translateY(-10px) scale(0.95); }
-      to   { opacity: 1; transform: translateY(0)     scale(1); }
+      from { opacity: 0; transform: translateY(10px) scale(0.95); }
+      to   { opacity: 1; transform: translateY(0)    scale(1); }
     }
     @keyframes cs-pane-out {
-      from { opacity: 1; transform: translateY(0)     scale(1); }
-      to   { opacity: 0; transform: translateY(-10px) scale(0.95); }
+      from { opacity: 1; transform: translateY(0)    scale(1); }
+      to   { opacity: 0; transform: translateY(10px) scale(0.95); }
     }
     @keyframes cs-fade-in {
       from { opacity: 0; transform: translateY(8px); }
@@ -39,11 +39,11 @@ function injectStyles() {
 
     .cs-pane-in {
       animation: cs-pane-in 0.36s cubic-bezier(0.16,1,0.3,1) both;
-      transform-origin: top center;
+      transform-origin: bottom center;
     }
     .cs-pane-out {
       animation: cs-pane-out 0.28s cubic-bezier(0.4,0,1,1) both;
-      transform-origin: top center;
+      transform-origin: bottom center;
       pointer-events: none;
     }
     .cs-clear-btn { transition: opacity 0.15s ease, transform 0.15s ease; }
@@ -318,7 +318,7 @@ function Spinner({ size = 20, color = C.cyan }: { size?: number; color?: string 
 }
 
 const SQUIRCLE_BASE: CSSProperties = {
-  width: 44, height: 60, flexShrink: 0,
+  width: 44, height: 66, flexShrink: 0,
   background: 'rgba(17,19,27,0.82)',
   backdropFilter: 'blur(30px) saturate(180%)',
   WebkitBackdropFilter: 'blur(30px) saturate(180%)',
@@ -836,13 +836,14 @@ function SearchBar({
           background: 'rgba(17,19,27,0.82)',
           backdropFilter: 'blur(30px) saturate(180%)',
           WebkitBackdropFilter: 'blur(30px) saturate(180%)',
-          borderRadius: showList ? '22px 22px 16px 16px' : 22,
+          borderRadius: showList ? '16px 16px 22px 22px' : 22,
           border: '1px solid rgba(255,255,255,0.12)',
           boxShadow: '0 8px 32px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08)',
           overflow: 'hidden',
+          display: 'flex', flexDirection: 'column-reverse',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '11px 14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '14px 14px' }}>
           <div className="cs-search-badge" style={{
             width: 36, height: 36, borderRadius: 12, flexShrink: 0,
             background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.14)',
@@ -895,7 +896,7 @@ function SearchBar({
 
         {showList && (
           <div style={{
-            borderTop: '1px solid rgba(255,255,255,0.08)',
+            borderBottom: '1px solid rgba(255,255,255,0.08)',
             paddingBottom: 6,
             maxHeight: 320,
             overflowY: 'auto',
@@ -1142,12 +1143,12 @@ export default function BookingSheet({
     search(dest);
   }, [search]);
 
-  // Outer column anchors everything. Top row uses alignItems:stretch so the
-  // squircle grows to the same height as the search bar / AI panel.
+  // Outer column anchors to the bottom. column-reverse means the search row
+  // stays at the bottom edge and the sheet panel grows upward above it.
   return (
     <div style={{
-      position: 'fixed', top: 28, left: '50%', transform: 'translateX(-50%)',
-      zIndex: 1000, display: 'flex', flexDirection: 'column', gap: 10,
+      position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+      zIndex: 1000, display: 'flex', flexDirection: 'column-reverse', gap: 10,
       width: 'min(492px, calc(100vw - 48px))',
     }}>
       {/* Top row — squircle is fixed height matching the search bar */}
