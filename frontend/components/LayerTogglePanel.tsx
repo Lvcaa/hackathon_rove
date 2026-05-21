@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, Animated, StyleSheet } from 'react-native';
-import { CategoryKey } from '../types/mobility';
+import { CategoryKey, Stats } from '../types/mobility';
 import { Colors, CategoryColors, CategoryIcons, CategoryLabels } from '../constants/colors';
 
 interface Props {
   visible: Set<CategoryKey>;
   onToggle: (cat: CategoryKey) => void;
+  stats: Stats;
 }
 
 const LAYERS: CategoryKey[] = [
@@ -16,6 +17,15 @@ const LAYERS: CategoryKey[] = [
   'busstops_urban',
   'busstops_extraurban',
   'buses',
+];
+
+const STATS: { key: keyof Stats; label: string; icon: string; color: string }[] = [
+  { key: 'stations',      label: 'Stazioni',     icon: '🚂', color: Colors.cyan   },
+  { key: 'taxi',          label: 'Taxi',          icon: '🚕', color: Colors.yellow },
+  { key: 'carsharing',    label: 'Car share',     icon: '🚗', color: Colors.purple },
+  { key: 'parking_zones', label: 'Parcheggi',    icon: '🅿️', color: Colors.green  },
+  { key: 'busstops',      label: 'Fermate bus',  icon: '🚌', color: Colors.orange },
+  { key: 'buses_live',    label: 'Bus in corsa', icon: '🚍', color: Colors.orange },
 ];
 
 // Presentational animated switch — the whole row owns the press, so this
@@ -44,7 +54,7 @@ function Switch({ on, color }: { on: boolean; color: string }) {
   );
 }
 
-export default function LayerTogglePanel({ visible, onToggle }: Props) {
+export default function LayerTogglePanel({ visible, onToggle, stats }: Props) {
   const [expanded, setExpanded] = useState(true);
   const [contentH, setContentH] = useState(0);
   const prog = useRef(new Animated.Value(1)).current;
@@ -100,6 +110,21 @@ export default function LayerTogglePanel({ visible, onToggle }: Props) {
           })}
         </View>
       </Animated.View>
+
+      <View style={styles.statsSection}>
+        <Text style={styles.statsHeading}>Risorse in rete</Text>
+        <View style={styles.statsGrid}>
+          {STATS.map(({ key, label, icon, color }) => (
+            <View key={key} style={styles.statCell}>
+              <Text style={styles.statIcon}>{icon}</Text>
+              <View style={styles.statText}>
+                <Text style={[styles.statValue, { color }]}>{stats[key]}</Text>
+                <Text style={styles.statLabel} numberOfLines={1}>{label}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
     </View>
   );
 }
@@ -108,19 +133,20 @@ const styles = StyleSheet.create({
   panel: {
     position: 'absolute',
     top: 12,
-    left: 12,
-    width: 214,
+    right: 12,
+    width: 244,
     zIndex: 1000,
-    backgroundColor: 'rgba(13,13,13,0.9)',
-    backdropFilter: 'blur(14px)' as any,
+    backgroundColor: 'rgba(18,18,20,0.55)',
+    backdropFilter: 'blur(22px) saturate(180%)' as any,
+    WebkitBackdropFilter: 'blur(22px) saturate(180%)' as any,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.09)',
-    borderRadius: 14,
+    borderColor: 'rgba(255,255,255,0.14)',
+    borderRadius: 16,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.45,
-    shadowRadius: 20,
+    shadowRadius: 24,
   },
 
   header: {
@@ -183,4 +209,42 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 2,
   },
+
+  statsSection: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 10,
+    paddingTop: 9,
+    paddingBottom: 10,
+  },
+  statsHeading: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: Colors.textMuted,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 7,
+    paddingHorizontal: 2,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  statCell: {
+    width: '47.5%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+  statIcon: { fontSize: 15 },
+  statText: { flex: 1 },
+  statValue: { fontSize: 16, fontWeight: '800', lineHeight: 19 },
+  statLabel: { fontSize: 9, color: Colors.textMuted, marginTop: 1 },
 });

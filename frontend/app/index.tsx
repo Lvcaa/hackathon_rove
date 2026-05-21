@@ -6,7 +6,6 @@ import { Colors } from '../constants/colors';
 import MapView from '../components/MapView';
 import Sidebar from '../components/Sidebar';
 import BottomSheet from '../components/BottomSheet';
-import StatsCard from '../components/StatsCard';
 import LayerTogglePanel from '../components/LayerTogglePanel';
 import BookingSheet from '../components/BookingSheet';
 
@@ -66,8 +65,11 @@ export default function MapScreen() {
           onFeatureSelect={handleFeatureSelect}
           onNavigate={handleNavigate}
         />
-        <StatsCard stats={stats} />
-        <LayerTogglePanel visible={visibleCategories} onToggle={handleToggleCategory} />
+        <LayerTogglePanel
+          visible={visibleCategories}
+          onToggle={handleToggleCategory}
+          stats={stats}
+        />
         {!isDesktop && (
           <BottomSheet
             data={data}
