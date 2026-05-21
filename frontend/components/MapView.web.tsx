@@ -66,7 +66,7 @@ function injectStyles() {
   const style = document.createElement('style');
   style.id = 'cs-map-styles';
   style.textContent = `
-    html, body { margin:0; padding:0; }
+    html, body { margin:0; padding:0; height:100%; overflow:hidden; }
     .leaflet-container { background:#0d1117 !important; font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif; }
 
     /* Popups always sit on the very top pane, above buses and stops. */

@@ -9,8 +9,10 @@ function injectGlobalStyles() {
   style.id = 'cs-global';
   style.textContent = `
     *, *::before, *::after { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; height: 100%; background: #0d0d0d; }
-    #root { height: 100%; display: flex; flex-direction: column; }
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0d0d0d; }
+    #root, [data-reactroot], #__next { height: 100%; display: flex; flex-direction: column; }
+    /* Expo-router Tabs wraps content in divs that need to fill the viewport */
+    #root > div, #root > div > div { flex: 1; min-height: 0; }
     ::-webkit-scrollbar { width: 4px; background: transparent; }
     ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
   `;
