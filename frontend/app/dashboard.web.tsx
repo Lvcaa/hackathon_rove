@@ -198,84 +198,26 @@ export default function DashboardScreen() {
         ))}
       </div>
 
-      {/* Parking occupancy */}
-      {parking?.summary && parking?.zones && (
-        <div style={{
-          background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16,
-          overflow: 'hidden', marginBottom: 20,
-        }}>
-          <div style={{
-            padding: '18px 24px', borderBottom: `1px solid ${C.border}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          }}>
-            <div>
-              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Occupazione parcheggi</h2>
-              <p style={{ margin: '2px 0 0', fontSize: 12, color: C.muted }}>
-                {parking.summary.configured_zones}/{parking.summary.total_zones} zone configurate
-                {parking.summary.distressed > 0 && (
-                  <span style={{ color: C.red, marginLeft: 10 }}>⚠ {parking.summary.distressed} in sofferenza</span>
-                )}
-                {parking.summary.full > 0 && (
-                  <span style={{ color: C.red, marginLeft: 10 }}>⛔ {parking.summary.full} al completo</span>
-                )}
-              </p>
-            </div>
-          </div>
-          <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {parking.zones.map((z) => {
-              const configured = z.max_capacity > 0;
-              const pct   = z.occupancy_pct;
-              const color = !configured ? 'rgba(255,255,255,0.18)'
-                          : z.distress  ? C.red
-                          : pct > 60    ? C.yellow
-                          : C.green;
-              return (
-                <div key={z.id}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                      {z.distress && <span style={{ color: C.red, fontSize: 12 }}>⚠</span>}
-                      <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{z.name}</span>
-                      <span style={{
-                        fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-                        color: configured ? color : 'rgba(255,255,255,0.25)',
-                        background: (configured ? color : 'rgba(255,255,255,0.1)') + '18',
-                        border: `1px solid ${(configured ? color : 'rgba(255,255,255,0.15)')}`,
-                        borderRadius: 5, padding: '1px 6px',
-                      }}>
-                        {configured ? `${z.available_spots}/${z.max_capacity} liberi` : 'non configurata'}
-                      </span>
-                    </div>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: configured ? color : 'rgba(255,255,255,0.2)' }}>
-                      {configured ? `${pct}%` : '—'}
-                    </span>
-                  </div>
-                  <div style={{ height: 5, borderRadius: 5, background: 'rgba(255,255,255,0.07)' }}>
-                    <div style={{
-                      height: '100%', borderRadius: 5,
-                      width: configured ? `${pct}%` : '0%',
-                      background: color,
-                      transition: 'width 0.7s cubic-bezier(0.16,1,0.3,1)',
-                    }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Destinations section */}
+      {/* Unified locations table */}
       <div style={{
         background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: 'hidden',
       }}>
-        {/* Section header */}
+        {/* Header */}
         <div style={{
           padding: '18px 24px', borderBottom: `1px solid ${C.border}`,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Luoghi di interesse</h2>
-            <p style={{ margin: '2px 0 0', fontSize: 12, color: C.muted }}>{destinations.length} destinazioni configurate</p>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Punti di interesse &amp; parcheggi</h2>
+            <p style={{ margin: '2px 0 0', fontSize: 12, color: C.muted }}>
+              {destinations.length} destinazioni
+              {parking?.summary && (
+                <span style={{ marginLeft: 10 }}>
+                  · {parking.summary.configured_zones}/{parking.summary.total_zones} parcheggi configurati
+                  {parking.summary.distressed > 0 && <span style={{ color: C.red, marginLeft: 8 }}>⚠ {parking.summary.distressed} in sofferenza</span>}
+                </span>
+              )}
+            </p>
           </div>
           {!editId && (
             <button
@@ -334,80 +276,111 @@ export default function DashboardScreen() {
             </div>
             {error && <p style={{ margin: 0, fontSize: 12, color: C.red }}>{error}</p>}
             <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                style={{
-                  background: C.cyan, color: '#000', border: 'none', borderRadius: 8,
-                  padding: '9px 20px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: FONT,
-                  opacity: saving ? 0.6 : 1,
-                }}
-              >{saving ? 'Salvataggio...' : 'Salva'}</button>
-              <button
-                onClick={handleCancelEdit}
-                style={{
-                  background: 'transparent', color: C.muted, border: `1px solid ${C.border}`,
-                  borderRadius: 8, padding: '9px 16px', fontSize: 12, cursor: 'pointer', fontFamily: FONT,
-                }}
-              >Annulla</button>
+              <button onClick={handleSave} disabled={saving} style={{
+                background: C.cyan, color: '#000', border: 'none', borderRadius: 8,
+                padding: '9px 20px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: FONT,
+                opacity: saving ? 0.6 : 1,
+              }}>{saving ? 'Salvataggio...' : 'Salva'}</button>
+              <button onClick={handleCancelEdit} style={{
+                background: 'transparent', color: C.muted, border: `1px solid ${C.border}`,
+                borderRadius: 8, padding: '9px 16px', fontSize: 12, cursor: 'pointer', fontFamily: FONT,
+              }}>Annulla</button>
             </div>
           </div>
         )}
 
-        {/* Table */}
+        {/* Table — destinations + parking zones */}
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                {['ID', 'Nome', 'Tipo', 'Latitudine', 'Longitudine', 'Azioni'].map((h) => (
+                {['Nome', 'Tipo', 'Posizione', 'Riempimento', 'Azioni'].map((h) => (
                   <th key={h} style={{
-                    padding: '10px 24px', textAlign: 'left',
+                    padding: '10px 20px', textAlign: 'left',
                     fontSize: 10, fontWeight: 700, color: C.muted,
                     textTransform: 'uppercase', letterSpacing: '0.08em',
+                    whiteSpace: 'nowrap',
                   }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
+              {/* ── Destinations ── */}
               {destinations.map((d, i) => (
-                <tr
-                  key={d.id}
-                  style={{
-                    borderBottom: i < destinations.length - 1 ? `1px solid ${C.border}` : 'none',
-                    background: editId === d.id ? C.cyan + '08' : 'transparent',
-                  }}
-                >
-                  <td style={{ padding: '12px 24px', color: C.muted, fontFamily: 'monospace', fontSize: 11 }}>{d.id}</td>
-                  <td style={{ padding: '12px 24px', fontWeight: 600 }}>{d.name}</td>
-                  <td style={{ padding: '12px 24px' }}><TypeBadge type={d.type} /></td>
-                  <td style={{ padding: '12px 24px', color: C.muted, fontFamily: 'monospace', fontSize: 12 }}>{d.lat.toFixed(5)}</td>
-                  <td style={{ padding: '12px 24px', color: C.muted, fontFamily: 'monospace', fontSize: 12 }}>{d.lng.toFixed(5)}</td>
-                  <td style={{ padding: '12px 24px' }}>
+                <tr key={d.id} style={{
+                  borderBottom: `1px solid ${C.border}`,
+                  background: editId === d.id ? C.cyan + '08' : 'transparent',
+                }}>
+                  <td style={{ padding: '12px 20px', fontWeight: 600, minWidth: 160 }}>{d.name}</td>
+                  <td style={{ padding: '12px 20px' }}><TypeBadge type={d.type} /></td>
+                  <td style={{ padding: '12px 20px', fontFamily: 'monospace', fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>
+                    {d.lat.toFixed(4)}, {d.lng.toFixed(4)}
+                  </td>
+                  <td style={{ padding: '12px 20px', minWidth: 160 }}>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)' }}>—</span>
+                  </td>
+                  <td style={{ padding: '12px 20px' }}>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      <button
-                        onClick={() => handleEdit(d)}
-                        style={{
-                          background: 'rgba(255,255,255,0.06)', border: `1px solid ${C.border}`,
-                          borderRadius: 7, padding: '5px 12px', color: C.text,
-                          fontSize: 11, cursor: 'pointer', fontFamily: FONT,
-                        }}
-                      >✏ Modifica</button>
-                      <button
-                        onClick={() => handleDelete(d.id, d.name)}
-                        style={{
-                          background: C.red + '14', border: `1px solid ${C.red}33`,
-                          borderRadius: 7, padding: '5px 12px', color: C.red,
-                          fontSize: 11, cursor: 'pointer', fontFamily: FONT,
-                        }}
-                      >✕ Elimina</button>
+                      <button onClick={() => handleEdit(d)} style={{
+                        background: 'rgba(255,255,255,0.06)', border: `1px solid ${C.border}`,
+                        borderRadius: 7, padding: '5px 12px', color: C.text,
+                        fontSize: 11, cursor: 'pointer', fontFamily: FONT,
+                      }}>✏</button>
+                      <button onClick={() => handleDelete(d.id, d.name)} style={{
+                        background: C.red + '14', border: `1px solid ${C.red}33`,
+                        borderRadius: 7, padding: '5px 12px', color: C.red,
+                        fontSize: 11, cursor: 'pointer', fontFamily: FONT,
+                      }}>✕</button>
                     </div>
                   </td>
                 </tr>
               ))}
-              {destinations.length === 0 && (
+
+              {/* ── Parking zones ── */}
+              {(parking?.zones ?? []).map((z) => {
+                const configured = z.max_capacity > 0;
+                const pct   = z.occupancy_pct;
+                const color = !configured ? 'rgba(255,255,255,0.18)'
+                            : z.distress  ? C.red
+                            : pct > 60    ? C.yellow
+                            : C.green;
+                return (
+                  <tr key={z.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: '12px 20px', fontWeight: 600 }}>
+                      {z.distress && <span style={{ color: C.red, marginRight: 5 }}>⚠</span>}
+                      {z.name}
+                    </td>
+                    <td style={{ padding: '12px 20px' }}><TypeBadge type="parking" /></td>
+                    <td style={{ padding: '12px 20px', fontFamily: 'monospace', fontSize: 11, color: C.muted }}>—</td>
+                    <td style={{ padding: '12px 20px', minWidth: 180 }}>
+                      {configured ? (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                            <span style={{ fontSize: 10, color: C.muted }}>{z.available_spots}/{z.max_capacity} liberi</span>
+                            <span style={{ fontSize: 11, fontWeight: 700, color }}>{pct}%</span>
+                          </div>
+                          <div style={{ height: 5, borderRadius: 5, background: 'rgba(255,255,255,0.07)' }}>
+                            <div style={{
+                              height: '100%', borderRadius: 5, width: `${pct}%`,
+                              background: color,
+                              transition: 'width 0.7s cubic-bezier(0.16,1,0.3,1)',
+                            }} />
+                          </div>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', fontStyle: 'italic' }}>non configurata</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '12px 20px' }}>
+                      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)' }}>—</span>
+                    </td>
+                  </tr>
+                );
+              })}
+              {destinations.length === 0 && (!parking?.zones || parking.zones.length === 0) && (
                 <tr>
-                  <td colSpan={6} style={{ padding: '32px 24px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
-                    Nessuna destinazione configurata
+                  <td colSpan={5} style={{ padding: '32px 24px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
+                    Nessun dato disponibile
                   </td>
                 </tr>
               )}
