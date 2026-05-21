@@ -1,8 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { MobilityData, Stats, BusVehicle, MobilityCollection } from '../types/mobility';
+import {
+  MobilityData, Stats, BusVehicle, MobilityCollection,
+  TrainVehicle, RailCollection,
+} from '../types/mobility';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
 const BUS_REFRESH_MS = 3_000;
+const TRAIN_REFRESH_MS = 4_000;
 
 // ── Mock data (Trento coordinates from CSV files) ───────────────────────────
 
@@ -58,6 +62,35 @@ const MOCK_BUSSTOPS: MobilityCollection = {
   ],
 };
 
+// Mock train stations + rail — a sketch of the Brennero corridor until the
+// backend loads real ViaggiaTreno / OSM data.
+const MOCK_TRAINSTATIONS: MobilityCollection = {
+  type: 'FeatureCollection',
+  features: [
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [10.9820, 45.4289] }, properties: { code: 'S02430', name: 'Verona Porta Nuova', line: 'brennero' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.0272, 45.8889] }, properties: { code: 'S02044', name: 'Rovereto', line: 'brennero' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.1194, 46.0717] }, properties: { code: 'S02038', name: 'Trento', line: 'brennero' } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [11.3567, 46.4964] }, properties: { code: 'S02026', name: 'Bolzano', line: 'brennero' } },
+  ],
+};
+
+const MOCK_RAIL: RailCollection = {
+  type: 'FeatureCollection',
+  features: [
+    {
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [10.9820, 45.4289], [11.0272, 45.8889],
+          [11.1194, 46.0717], [11.3567, 46.4964],
+        ],
+      },
+      properties: { line: 'brennero', length_km: 146 },
+    },
+  ],
+};
+
 // Simulated live buses (mirrors the backend logic, runs in frontend when no backend)
 function simulateBuses(t: number): BusVehicle[] {
   const routes: Record<string, { kind: 'urban' | 'extraurban'; wps: [number, number][] }> = {
@@ -91,6 +124,9 @@ export function useMobilityData() {
   const [data, setData] = useState<MobilityData>(MOCK);
   const [busStops, setBusStops] = useState<MobilityCollection>(MOCK_BUSSTOPS);
   const [busVehicles, setBusVehicles] = useState<BusVehicle[]>(() => simulateBuses(Date.now() / 1000));
+  const [trainStations, setTrainStations] = useState<MobilityCollection>(MOCK_TRAINSTATIONS);
+  const [rail, setRail] = useState<RailCollection>(MOCK_RAIL);
+  const [trainVehicles, setTrainVehicles] = useState<TrainVehicle[]>([]);
   const [stats, setStats] = useState<Stats>({
     stations: MOCK.stations.features.length,
     taxi: MOCK.taxi.features.length,
@@ -98,6 +134,8 @@ export function useMobilityData() {
     parking_zones: MOCK.parking.features.length,
     busstops: MOCK_BUSSTOPS.features.length,
     buses_live: 12,
+    trainstations: MOCK_TRAINSTATIONS.features.length,
+    trains_live: 0,
   });
   const [loading, setLoading] = useState(true);
   const backendAvailable = useRef(false);
@@ -149,6 +187,71 @@ export function useMobilityData() {
     fetchBusStops();
   }, []);
 
+  // Fetch train stations + railway geometry once
+  useEffect(() => {
+    async function fetchRailStatic() {
+      try {
+        const [stR, rR] = await Promise.all([
+          fetch(`${API_BASE}/api/trainstations`, { signal: AbortSignal.timeout(10000) }),
+          fetch(`${API_BASE}/api/rail`, { signal: AbortSignal.timeout(120000) }),
+        ]);
+        if (stR.ok) {
+          const col: MobilityCollection = await stR.json();
+          if (col.features.length > 0) {
+            setTrainStations(col);
+            setStats((prev) => ({ ...prev, trainstations: col.features.length }));
+          }
+        }
+        if (rR.ok) {
+          const col: RailCollection = await rR.json();
+          if (col.features.length > 0) setRail(col);
+        }
+      } catch {
+        // keep mock rail + stations
+      }
+    }
+    fetchRailStatic();
+  }, []);
+
+  // Refresh live train positions
+  useEffect(() => {
+    async function fetchTrains() {
+      try {
+        const res = await fetch(`${API_BASE}/api/trains/live`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) throw new Error('not ok');
+        const col: { features: { geometry: { coordinates: number[] }; properties: Record<string, string | number | boolean> }[] } = await res.json();
+        const trains: TrainVehicle[] = col.features.map((f) => {
+          const p = f.properties;
+          return {
+            id: String(p.id),
+            lat: f.geometry.coordinates[1],
+            lon: f.geometry.coordinates[0],
+            bearing: Number(p.bearing),
+            brand: String(p.brand) as TrainVehicle['brand'],
+            brandLabel: String(p.brand_label),
+            color: String(p.color),
+            fast: p.fast === true,
+            cars: Number(p.cars),
+            lengthM: Number(p.length_m),
+            number: String(p.number),
+            headsign: String(p.headsign),
+            line: String(p.line),
+            delay: Number(p.delay),
+            live: p.live !== false,
+            speed: Number(p.speed),
+          };
+        });
+        setTrainVehicles(trains);
+        setStats((prev) => ({ ...prev, trains_live: trains.length }));
+      } catch {
+        // backend unreachable — leave trains empty
+      }
+    }
+    fetchTrains();
+    const id = setInterval(fetchTrains, TRAIN_REFRESH_MS);
+    return () => clearInterval(id);
+  }, []);
+
   // Refresh live bus positions every 15 s
   useEffect(() => {
     async function fetchBuses() {
@@ -185,5 +288,5 @@ export function useMobilityData() {
     return () => clearInterval(id);
   }, []);
 
-  return { data, busStops, busVehicles, stats, loading };
+  return { data, busStops, busVehicles, trainStations, rail, trainVehicles, stats, loading };
 }

@@ -1,0 +1,710 @@
+"""
+Train router — Brennero corridor (Verona ↔ Bolzano) + the Trento–Malè line.
+
+Two railways are modelled:
+
+  * ``brennero`` — the Verona–Bolzano main line. Real schedules, platforms,
+    delays and live train positions come from RFI's ViaggiaTreno service (the
+    data behind viaggiatreno.it). Every operator on the line is covered:
+    Regionale, Regionale Veloce, Intercity, Frecciarossa and the ÖBB/DB
+    EuroCity. Italo runs no ViaggiaTreno-visible service here, so its trains
+    are generated from a synthetic timetable.
+  * ``ftm`` — the Trentino Trasporti narrow-gauge Trento–Malè–Mezzana line,
+    served entirely by a synthetic Trentino Trasporti timetable.
+
+Track geometry is the real OSM alignment (route relations 1773670 / 1772516),
+downloaded once and cached on disk. Every train marker is snapped onto that
+polyline, so trains visibly follow the rails. A train with a fresh ViaggiaTreno
+GPS fix is shown live; otherwise its position is reconstructed from the
+scheduled stop times — the same heuristic the synthetic services always use.
+"""
+
+from __future__ import annotations
+
+import bisect
+import json
+import math
+import threading
+import time as _time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import quote
+from zoneinfo import ZoneInfo
+
+import requests
+from fastapi import APIRouter
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+RAIL_DIR = Path(__file__).parent.parent / "dataset" / "rail"
+ROME = ZoneInfo("Europe/Rome")
+
+_VT_BASE = "http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno"
+_OVERPASS = "https://overpass-api.de/api/interpreter"
+_HEADERS = {"User-Agent": "CommuteSync Hackathon/1.0"}
+
+# OSM route relations carrying the real track alignment of each line.
+_RAIL_RELATIONS = {"brennero": 1773670, "ftm": 1772516}
+
+_POLL_SEC = 40            # how often the background thread re-polls ViaggiaTreno
+_LIVE_FIX_MAX_SEC = 1800  # a GPS fix older than this no longer counts as "live"
+_TRACK_WORKERS = 16       # parallel andamentoTreno requests
+_MAX_TRACKED = 70         # cap on ViaggiaTreno trains tracked per cycle
+
+# Brennero corridor, south → north. ViaggiaTreno station codes were resolved
+# via its cercaStazione endpoint; coordinates are snapped onto the rail line.
+_BRENNERO_STATIONS = [
+    ("S02430", "Verona Porta Nuova", "", 45.4289, 10.9820),
+    ("S02055", "Domegliara-Sant'Ambrogio", "", 45.5494, 10.8389),
+    ("S02052", "Peri", "", 45.6594, 10.9242),
+    ("S02049", "Ala", "", 45.7556, 11.0044),
+    ("S02044", "Rovereto", "", 45.8889, 11.0272),
+    ("S02041", "Calliano", "", 45.9494, 11.0922),
+    ("S02038", "Trento", "", 46.0717, 11.1194),
+    ("S02035", "Mezzocorona", "", 46.2092, 11.1219),
+    ("S02034", "Salorno", "Salurn", 46.2381, 11.2106),
+    ("S02032", "Egna-Termeno", "Neumarkt-Tramin", 46.3194, 11.2719),
+    ("S02031", "Ora", "Auer", 46.3475, 11.3019),
+    ("S02030", "Bronzolo", "Branzoll", 46.4036, 11.3208),
+    ("S02026", "Bolzano", "Bozen", 46.4964, 11.3567),
+]
+
+# Trento–Malè–Mezzana (FTM) line — no ViaggiaTreno codes (narrow gauge, off
+# the RFI network), so synthetic ``FTM-*`` ids are used.
+_FTM_STATIONS = [
+    ("FTM-TN", "Trento FS", "", 46.0717, 11.1194),
+    ("FTM-LV", "Lavis", "", 46.1394, 11.1097),
+    ("FTM-MZ", "Mezzolombardo", "", 46.2122, 11.0939),
+    ("FTM-MC", "Mezzocorona FTM", "", 46.2147, 11.1219),
+    ("FTM-CL", "Cles", "", 46.3661, 11.0339),
+    ("FTM-ML", "Malè", "", 46.3536, 10.9136),
+    ("FTM-MN", "Mezzana", "", 46.3181, 10.8047),
+]
+
+# Train brands — colour, typical composition and whether it is a fast service.
+# ``length_m`` is derived as cars × car length and feeds the map icon scale.
+BRANDS: dict[str, dict] = {
+    "frecciarossa": {"label": "Frecciarossa", "color": "#c4122e", "cars": 8, "car_m": 25, "fast": True},
+    "italo":        {"label": "Italo",        "color": "#9d2235", "cars": 7, "car_m": 27, "fast": True},
+    "eurocity":     {"label": "EuroCity ÖBB/DB", "color": "#2a4d8f", "cars": 7, "car_m": 26, "fast": True},
+    "intercity":    {"label": "Intercity",    "color": "#3f7c8c", "cars": 9, "car_m": 26, "fast": False},
+    "regionale_v":  {"label": "Regionale Veloce", "color": "#e0762a", "cars": 6, "car_m": 25, "fast": False},
+    "regionale":    {"label": "Regionale",    "color": "#2f9e44", "cars": 4, "car_m": 24, "fast": False},
+    "trentino":     {"label": "Trentino Trasporti", "color": "#d11f2d", "cars": 3, "car_m": 17, "fast": False},
+}
+
+
+def _brand_length(brand: str) -> int:
+    b = BRANDS[brand]
+    return b["cars"] * b["car_m"]
+
+
+def _classify(categoria: str, cat_desc: str) -> str:
+    """Map a ViaggiaTreno train category to one of the BRANDS keys."""
+    c = (categoria or "").strip().upper()
+    d = (cat_desc or "").strip().upper()
+    if "FR" in d or c in ("FR", "FA", "FB"):
+        return "frecciarossa"
+    if "IT" in d or "AV" in d:
+        return "italo"
+    if c in ("EC", "ECN", "EN"):
+        return "eurocity"
+    if c in ("IC", "ICN", "EXP"):
+        return "intercity"
+    if c == "RV":
+        return "regionale_v"
+    return "regionale"
+
+
+# ---------------------------------------------------------------------------
+# Geometry helpers
+# ---------------------------------------------------------------------------
+
+def _haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
+    lat1, lon1, lat2, lon2 = map(math.radians, (a[0], a[1], b[0], b[1]))
+    h = (
+        math.sin((lat2 - lat1) / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+    )
+    return 6371.0 * 2 * math.asin(min(1.0, math.sqrt(h)))
+
+
+def _bearing(a: tuple[float, float], b: tuple[float, float]) -> float:
+    lat1, lat2 = math.radians(a[0]), math.radians(b[0])
+    dlon = math.radians(b[1] - a[1])
+    y = math.sin(dlon) * math.cos(lat2)
+    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+    return (math.degrees(math.atan2(y, x)) + 360) % 360
+
+
+# ---------------------------------------------------------------------------
+# Rail line — the real OSM track polyline with cumulative distances
+# ---------------------------------------------------------------------------
+
+class RailLine:
+    """An ordered track polyline with cumulative km, used to place trains."""
+
+    def __init__(self, key: str, points: list[tuple[float, float]]):
+        self.key = key
+        self.points = points
+        self.cum = [0.0]
+        for i in range(1, len(points)):
+            self.cum.append(self.cum[-1] + _haversine_km(points[i - 1], points[i]))
+        self.length = self.cum[-1] if self.cum else 0.0
+
+    def point_at(self, dist_km: float) -> tuple[float, float, float]:
+        """(lat, lon, bearing) at a cumulative distance along the track."""
+        if not self.points:
+            return 0.0, 0.0, 0.0
+        if dist_km <= 0:
+            i = 0
+        elif dist_km >= self.length:
+            i = len(self.points) - 2
+        else:
+            i = bisect.bisect_right(self.cum, dist_km) - 1
+        i = max(0, min(i, len(self.points) - 2))
+        a, b = self.points[i], self.points[i + 1]
+        span = self.cum[i + 1] - self.cum[i]
+        f = (dist_km - self.cum[i]) / span if span > 0 else 0.0
+        lat = a[0] + f * (b[0] - a[0])
+        lon = a[1] + f * (b[1] - a[1])
+        return lat, lon, _bearing(a, b)
+
+    def project(self, lat: float, lon: float) -> float:
+        """Cumulative distance of the polyline vertex nearest to (lat, lon)."""
+        best_i, best_d = 0, float("inf")
+        for i, p in enumerate(self.points):
+            d = (p[0] - lat) ** 2 + (p[1] - lon) ** 2
+            if d < best_d:
+                best_d, best_i = d, i
+        return self.cum[best_i]
+
+
+def _stitch(ways: list[list[dict]]) -> list[tuple[float, float]]:
+    """Join OSM relation member ways into one continuous polyline.
+
+    Members come in route order; each way is flipped if its far end, rather
+    than its near end, sits closer to the chain tail.
+    """
+    if not ways:
+        return []
+    chain = [(g["lat"], g["lon"]) for g in ways[0]]
+    for way in ways[1:]:
+        seg = [(g["lat"], g["lon"]) for g in way]
+        if len(seg) < 2:
+            continue
+        tail = chain[-1]
+        d_head = (tail[0] - seg[0][0]) ** 2 + (tail[1] - seg[0][1]) ** 2
+        d_foot = (tail[0] - seg[-1][0]) ** 2 + (tail[1] - seg[-1][1]) ** 2
+        if d_foot < d_head:
+            seg.reverse()
+        chain.extend(seg)
+    return chain
+
+
+def _load_rail(key: str, rel_id: int) -> list[tuple[float, float]]:
+    """Stitched track polyline for a line, cached on disk after first fetch."""
+    cache = RAIL_DIR / f"{key}.json"
+    if cache.exists():
+        return [tuple(p) for p in json.loads(cache.read_text())]
+    query = f"[out:json][timeout:120];rel({rel_id});out geom;"
+    resp = requests.get(
+        _OVERPASS, params={"data": query}, headers=_HEADERS, timeout=140
+    )
+    resp.raise_for_status()
+    members = resp.json()["elements"][0]["members"]
+    ways = [m["geometry"] for m in members if m["type"] == "way" and "geometry" in m]
+    points = _stitch(ways)
+    RAIL_DIR.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(points))
+    return points
+
+
+# ---------------------------------------------------------------------------
+# Build lines and stations (once, at import time)
+# ---------------------------------------------------------------------------
+
+_LINES: dict[str, RailLine] = {}
+_STATIONS: list[dict] = []      # ordered: every station of every line
+_STATION_BY_CODE: dict[str, dict] = {}
+
+
+def _build_static() -> None:
+    raw = {
+        "brennero": _BRENNERO_STATIONS,
+        "ftm": _FTM_STATIONS,
+    }
+    for key, rel_id in _RAIL_RELATIONS.items():
+        try:
+            line = RailLine(key, _load_rail(key, rel_id))
+        except Exception:
+            # Overpass unreachable — fall back to a polyline through the
+            # stations themselves so trains still have rails to ride.
+            pts = [(lat, lon) for _, _, _, lat, lon in raw[key]]
+            line = RailLine(key, pts)
+        _LINES[key] = line
+
+        for order, (code, name, name_de, lat, lon) in enumerate(raw[key]):
+            station = {
+                "code": code, "name": name, "name_de": name_de,
+                "lat": lat, "lon": lon, "line": key, "order": order,
+                "railpos": line.project(lat, lon),
+            }
+            _STATIONS.append(station)
+            _STATION_BY_CODE[code] = station
+
+
+_build_static()
+_BRENNERO_CODES = {s["code"] for s in _STATIONS if s["line"] == "brennero"}
+
+# ---------------------------------------------------------------------------
+# ViaggiaTreno client
+# ---------------------------------------------------------------------------
+
+_session = requests.Session()
+_DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+_MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _vt_date(dt: datetime) -> str:
+    """ViaggiaTreno's expected date string, e.g. 'Thu May 21 2026 13:57:00'."""
+    return (f"{_DOW[dt.weekday()]} {_MON[dt.month - 1]} {dt.day:02d} "
+            f"{dt.year} {dt:%H:%M:%S}")
+
+
+def _vt_get(path: str):
+    resp = _session.get(f"{_VT_BASE}/{path}", headers=_HEADERS, timeout=15)
+    resp.raise_for_status()
+    text = resp.text.strip()
+    if not text:
+        return None
+    return resp.json()
+
+
+def _vt_departures(code: str, dt: datetime) -> list[dict]:
+    try:
+        data = _vt_get(f"partenze/{code}/{quote(_vt_date(dt))}")
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Live train state (filled by the background poller)
+# ---------------------------------------------------------------------------
+
+_lock = threading.Lock()
+_vt_trips: list[dict] = []                 # tracked ViaggiaTreno trips
+_board_cache: dict[str, tuple[float, list[dict]]] = {}  # code -> (epoch, raw)
+_VT_OK = False
+_started = False
+
+
+def _build_trip(
+    cod_origine: str, numero: int, data_partenza: int,
+    categoria: str = "", cat_desc: str = "",
+) -> dict | None:
+    """Resolve one ViaggiaTreno train into a corridor-clipped trip.
+
+    The returned trip carries, for every stop inside the Brennero corridor,
+    its cumulative rail position and the actual time the train is expected
+    there (scheduled time shifted by the live delay). ``categoria`` /
+    ``cat_desc`` come from the departure board — the andamentoTreno detail
+    often omits them, so the board's values are used to brand the train.
+    """
+    try:
+        detail = _vt_get(f"andamentoTreno/{cod_origine}/{numero}/{data_partenza}")
+    except Exception:
+        return None
+    if not isinstance(detail, dict):
+        return None
+
+    fermate = detail.get("fermate") or []
+    delay_min = detail.get("ritardo") or 0
+    points: list[tuple[float, float]] = []  # (railpos_km, actual_epoch_ms)
+    for f in fermate:
+        station = _STATION_BY_CODE.get(f.get("id"))
+        if station is None or station["line"] != "brennero":
+            continue
+        scheduled = f.get("programmata")
+        if scheduled is None:
+            continue
+        actual = f.get("effettiva") or (scheduled + delay_min * 60_000)
+        points.append((station["railpos"], float(actual)))
+
+    if len(points) < 2:
+        return None  # train never travels two corridor stations — not on the line
+
+    # ViaggiaTreno reports fermate in route order; guarantee monotone time.
+    points.sort(key=lambda p: p[1])
+
+    fix = detail.get("oraUltimoRilevamento")
+    live = bool(fix) and (_time.time() * 1000 - fix) < _LIVE_FIX_MAX_SEC * 1000
+    brand = _classify(
+        categoria or detail.get("categoria", ""),
+        cat_desc or detail.get("categoriaDescrizione", ""),
+    )
+
+    return {
+        "id": f"vt-{numero}",
+        "line": "brennero",
+        "brand": brand,
+        "number": (detail.get("compNumeroTreno") or str(numero)).strip(),
+        "headsign": (detail.get("destinazione") or "").strip().title(),
+        "delay": int(delay_min),
+        "live": live,
+        "points": points,
+    }
+
+
+def _poll() -> None:
+    """One ViaggiaTreno refresh cycle — discover and track corridor trains."""
+    global _vt_trips, _VT_OK
+    now = datetime.now(ROME)
+
+    # Discovery: a handful of stations whose departure boards, together,
+    # surface every train running the corridor.
+    discovery = ["S02430", "S02044", "S02038", "S02035", "S02026"]
+    seen: dict[tuple, tuple] = {}
+    for code in discovery:
+        deps = _vt_departures(code, now)
+        _board_cache[code] = (_time.time(), deps)
+        for t in deps:
+            num = t.get("numeroTreno")
+            origin = t.get("codOrigine")
+            dep = t.get("dataPartenzaTreno")
+            if num and origin and dep:
+                seen[(origin, num)] = (
+                    origin, num, dep,
+                    t.get("categoria", ""), t.get("categoriaDescrizione", ""),
+                )
+
+    keys = list(seen.values())[:_MAX_TRACKED]
+    if not keys:
+        return
+
+    trips: list[dict] = []
+    with ThreadPoolExecutor(max_workers=_TRACK_WORKERS) as ex:
+        for trip in ex.map(lambda k: _build_trip(*k), keys):
+            if trip:
+                trips.append(trip)
+
+    with _lock:
+        _vt_trips = trips
+    _VT_OK = True
+
+
+def _worker() -> None:
+    while True:
+        try:
+            _poll()
+        except Exception:
+            pass  # keep the last good cache, retry next cycle
+        _time.sleep(_POLL_SEC)
+
+
+def start() -> None:
+    """Start the background ViaggiaTreno poller once."""
+    global _started
+    if _started:
+        return
+    _started = True
+    threading.Thread(target=_worker, daemon=True, name="trains-poll").start()
+
+
+# ---------------------------------------------------------------------------
+# Synthetic timetable — Italo (Brennero) and Trentino Trasporti (FTM)
+# ---------------------------------------------------------------------------
+
+# brand, line, headway (min), traversal (min), departures per direction
+_SYNTH_BASE = [
+    ("italo", "brennero", 130, 96, 11),
+    ("trentino", "ftm", 35, 74, 32),
+]
+# Added only when ViaggiaTreno is unreachable, so the Brennero line is never
+# empty even with no upstream data.
+_SYNTH_FALLBACK = [
+    ("regionale", "brennero", 32, 138, 44),
+    ("frecciarossa", "brennero", 70, 86, 22),
+    ("regionale_v", "brennero", 95, 112, 16),
+    ("eurocity", "brennero", 180, 100, 8),
+]
+
+
+def _synthetic_trips(now_ms: float) -> list[dict]:
+    """Trips from the synthetic timetable that are running right now."""
+    now = datetime.now(ROME)
+    midnight_ms = now.replace(
+        hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000
+
+    specs = list(_SYNTH_BASE)
+    if not _VT_OK:
+        specs += _SYNTH_FALLBACK
+
+    trips: list[dict] = []
+    for brand, line_key, headway, traversal, count in specs:
+        line = _LINES.get(line_key)
+        if line is None:
+            continue
+        traversal_ms = traversal * 60_000
+        for direction in (1, -1):
+            head_label = (
+                {"brennero": "Bolzano", "ftm": "Mezzana"}[line_key]
+                if direction == 1
+                else {"brennero": "Verona Porta Nuova", "ftm": "Trento FS"}[line_key]
+            )
+            for k in range(count):
+                # First service at 05:00, then one every `headway` minutes.
+                depart_ms = midnight_ms + (300 + k * headway) * 60_000
+                if not (depart_ms <= now_ms <= depart_ms + traversal_ms):
+                    continue
+                if direction == 1:
+                    pts = [(0.0, depart_ms), (line.length, depart_ms + traversal_ms)]
+                else:
+                    pts = [(line.length, depart_ms), (0.0, depart_ms + traversal_ms)]
+                trips.append({
+                    "id": f"syn-{brand}-{line_key}-{direction}-{k}",
+                    "line": line_key,
+                    "brand": brand,
+                    "number": f"{_synth_number(brand, k)}",
+                    "headsign": head_label,
+                    "delay": 0,
+                    "live": False,
+                    "points": pts,
+                })
+    return trips
+
+
+def _synth_number(brand: str, k: int) -> str:
+    prefix = {"italo": "ITA", "trentino": "R", "regionale": "RE",
+              "frecciarossa": "FR", "regionale_v": "RV", "eurocity": "EC"}
+    base = {"italo": 8900, "trentino": 200, "regionale": 5600,
+            "frecciarossa": 9700, "regionale_v": 2200, "eurocity": 80}
+    return f"{prefix.get(brand, 'T')} {base.get(brand, 100) + k}"
+
+
+# ---------------------------------------------------------------------------
+# Position reconstruction
+# ---------------------------------------------------------------------------
+
+def _train_position(trip: dict, now_ms: float):
+    """Place a trip on its rail line at the current wall-clock time.
+
+    Returns (lat, lon, bearing, speed_kmh) or None when the train is not
+    inside the modelled corridor right now.
+    """
+    pts = trip["points"]
+    times = [p[1] for p in pts]
+    dists = [p[0] for p in pts]
+    if now_ms < times[0] or now_ms > times[-1]:
+        return None
+
+    seg = bisect.bisect_right(times, now_ms) - 1
+    seg = max(0, min(seg, len(pts) - 2))
+    t0, t1 = times[seg], times[seg + 1]
+    d0, d1 = dists[seg], dists[seg + 1]
+    f = (now_ms - t0) / (t1 - t0) if t1 > t0 else 0.0
+    dist = d0 + f * (d1 - d0)
+
+    line = _LINES[trip["line"]]
+    lat, lon, bearing = line.point_at(dist)
+    if d1 < d0:                       # travelling toward decreasing rail km
+        bearing = (bearing + 180) % 360
+
+    hours = (t1 - t0) / 3_600_000
+    speed = abs(d1 - d0) / hours if hours > 0 else 0.0
+    return lat, lon, bearing, min(round(speed), 300)
+
+
+def _all_trips() -> list[dict]:
+    with _lock:
+        trips = list(_vt_trips)
+    now_ms = _time.time() * 1000
+    return trips + _synthetic_trips(now_ms)
+
+
+# ---------------------------------------------------------------------------
+# Router
+# ---------------------------------------------------------------------------
+
+router = APIRouter()
+
+
+@router.get("/api/rail")
+def get_rail() -> dict:
+    """GeoJSON LineStrings of each modelled railway's real OSM alignment."""
+    features = []
+    for key, line in _LINES.items():
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [[lon, lat] for lat, lon in line.points],
+            },
+            "properties": {"line": key, "length_km": round(line.length, 1)},
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
+@router.get("/api/trainstations")
+def get_train_stations() -> dict:
+    """GeoJSON Point features for every station on the modelled lines."""
+    features = []
+    for s in _STATIONS:
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [s["lon"], s["lat"]]},
+            "properties": {
+                "code": s["code"], "name": s["name"], "name_de": s["name_de"],
+                "line": s["line"], "order": s["order"],
+            },
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
+@router.get("/api/trains/live")
+def get_live_trains() -> dict:
+    """
+    GeoJSON Point features for every train currently inside a modelled
+    corridor. ``live`` is true for a real ViaggiaTreno GPS fix and false for a
+    position reconstructed from the timetable.
+    """
+    now_ms = _time.time() * 1000
+    features: list[dict] = []
+    for trip in _all_trips():
+        pos = _train_position(trip, now_ms)
+        if pos is None:
+            continue
+        lat, lon, bearing, speed = pos
+        brand = trip["brand"]
+        meta = BRANDS[brand]
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {
+                "id": trip["id"],
+                "brand": brand,
+                "brand_label": meta["label"],
+                "color": meta["color"],
+                "fast": meta["fast"],
+                "cars": meta["cars"],
+                "length_m": _brand_length(brand),
+                "number": trip["number"],
+                "headsign": trip["headsign"],
+                "line": trip["line"],
+                "delay": trip["delay"],
+                "live": trip["live"],
+                "bearing": round(bearing),
+                "speed": speed,
+            },
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _brennero_board(code: str, ref: datetime, limit: int) -> list[dict]:
+    """Departure board for a Brennero station, from live ViaggiaTreno data."""
+    cached = _board_cache.get(code)
+    fresh = cached and (_time.time() - cached[0]) < 90 and \
+        abs((ref - datetime.now(ROME)).total_seconds()) < 120
+    raw = cached[1] if fresh else _vt_departures(code, ref)
+
+    now_ms = _time.time() * 1000
+    rows: list[dict] = []
+    for t in raw:
+        brand = _classify(t.get("categoria", ""), t.get("categoriaDescrizione", ""))
+        platform = (t.get("binarioEffettivoPartenzaDescrizione")
+                    or t.get("binarioProgrammatoPartenzaDescrizione") or "")
+        dep_ms = t.get("orarioPartenza")
+        in_min = round((dep_ms - now_ms) / 60_000) if dep_ms else None
+        if in_min is not None and in_min < -2:
+            continue  # already departed — drop from the "next trains" board
+        rows.append({
+            "number": (t.get("compNumeroTreno") or "").strip(),
+            "brand": brand,
+            "brand_label": BRANDS[brand]["label"],
+            "color": BRANDS[brand]["color"],
+            "destination": (t.get("destinazione") or "").strip().title(),
+            "time": (t.get("compOrarioPartenza") or "").strip(),
+            "delay": int(t.get("ritardo") or 0),
+            "platform": str(platform).strip(),
+            "departed": bool(t.get("nonPartito") is False and t.get("inStazione") is False),
+            "in_min": in_min,
+        })
+    rows.sort(key=lambda r: r["in_min"] if r["in_min"] is not None else 1e9)
+    return rows[:limit]
+
+
+def _ftm_board(station: dict, ref: datetime, limit: int) -> list[dict]:
+    """Synthetic departure board for a Trento–Malè (FTM) station."""
+    line = _LINES["ftm"]
+    ref_ms = ref.timestamp() * 1000
+    midnight_ms = ref.replace(
+        hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000
+    headway, traversal, count = 35, 74, 32
+    traversal_ms = traversal * 60_000
+
+    rows: list[dict] = []
+    for direction in (1, -1):
+        head_label = "Mezzana" if direction == 1 else "Trento FS"
+        # Fraction of the line already covered when the train reaches here.
+        frac = (station["railpos"] / line.length) if line.length else 0.0
+        if direction == -1:
+            frac = 1 - frac
+        for k in range(count):
+            depart_ms = midnight_ms + (300 + k * headway) * 60_000
+            pass_ms = depart_ms + frac * traversal_ms
+            in_min = round((pass_ms - ref_ms) / 60_000)
+            if in_min < 0 or in_min > 240:
+                continue
+            rows.append({
+                "number": _synth_number("trentino", k),
+                "brand": "trentino",
+                "brand_label": BRANDS["trentino"]["label"],
+                "color": BRANDS["trentino"]["color"],
+                "destination": head_label,
+                "time": datetime.fromtimestamp(pass_ms / 1000, ROME).strftime("%H:%M"),
+                "delay": 0,
+                "platform": "1" if direction == 1 else "2",
+                "departed": False,
+                "in_min": in_min,
+            })
+    rows.sort(key=lambda r: r["in_min"])
+    return rows[:limit]
+
+
+@router.get("/api/trainstations/{code}/board")
+def get_station_board(code: str, time: str | None = None, limit: int = 12) -> dict:
+    """Scheduled departures from a station, each with its platform/track."""
+    station = _STATION_BY_CODE.get(code)
+    limit = max(1, min(limit, 30))
+
+    ref = datetime.now(ROME)
+    if time:
+        try:
+            hh, mm = time.split(":")
+            ref = ref.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+        except (ValueError, AttributeError):
+            time = None
+
+    if station is None:
+        departures: list[dict] = []
+    elif station["line"] == "brennero":
+        departures = _brennero_board(code, ref, limit)
+    else:
+        departures = _ftm_board(station, ref, limit)
+
+    return {
+        "code": code,
+        "name": station["name"] if station else "",
+        "line": station["line"] if station else "",
+        "time": time or ref.strftime("%H:%M"),
+        "date": ref.date().isoformat(),
+        "departures": departures,
+    }
+
+
+start()

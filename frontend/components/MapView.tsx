@@ -3,6 +3,7 @@ import { View, StyleSheet } from 'react-native';
 import { WebView } from 'react-native-webview';
 import {
   MobilityData, MobilityFeature, MobilityCollection, CategoryKey, BusVehicle,
+  TrainVehicle, RailCollection,
 } from '../types/mobility';
 import { LiveLocation, LocationStatus } from '../hooks/useLiveLocation';
 import { RouteSuggestion } from '../types/routing';
@@ -11,6 +12,9 @@ interface Props {
   data: MobilityData;
   busStops: MobilityCollection;
   busVehicles: BusVehicle[];
+  trainStations: MobilityCollection;
+  rail: RailCollection;
+  trainVehicles: TrainVehicle[];
   visibleCategories: Set<CategoryKey>;
   selectedFeature: MobilityFeature | null;
   onFeatureSelect: (feature: MobilityFeature, category: CategoryKey) => void;

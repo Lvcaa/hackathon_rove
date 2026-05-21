@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
+from app import trains
 from app.routers import admin, mobility, transit
 from app.routers import ai, destinations, parking, routing, sensors, sharing, trips
 
@@ -23,6 +24,7 @@ def startup() -> None:
 # GeoJSON / legacy data endpoints
 app.include_router(mobility.router)
 app.include_router(transit.router)
+app.include_router(trains.router)
 app.include_router(admin.router)
 
 # Booking system

@@ -16,3 +16,6 @@ mlruns/
 
 # Cached GTFS feed (downloaded at backend startup)
 dataset/gtfs/
+
+# Cached OSM railway geometry (downloaded at backend startup)
+dataset/rail/

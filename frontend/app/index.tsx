@@ -33,10 +33,11 @@ function featureCoords(f: MobilityFeature): { lat: number; lng: number } {
 const ALL: Set<CategoryKey> = new Set([
   'stations', 'taxi', 'carsharing', 'parking',
   'busstops_urban', 'busstops_extraurban', 'buses',
+  'trainstations', 'trains',
 ]);
 
 export default function MapScreen() {
-  const { data, busStops, busVehicles, stats } = useMobilityData();
+  const { data, busStops, busVehicles, trainStations, rail, trainVehicles, stats } = useMobilityData();
   const { location, status: locationStatus, start: startLocating } = useLiveLocation();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
@@ -119,6 +120,9 @@ export default function MapScreen() {
           data={data}
           busStops={busStops}
           busVehicles={busVehicles}
+          trainStations={trainStations}
+          rail={rail}
+          trainVehicles={trainVehicles}
           visibleCategories={visibleCategories}
           selectedFeature={selectedFeature?.feature ?? null}
           onFeatureSelect={handleFeatureSelect}

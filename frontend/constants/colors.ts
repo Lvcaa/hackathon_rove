@@ -17,6 +17,10 @@ export const Colors = {
 export const BusUrbanColor = '#76b82a';
 export const BusExtraColor = '#1c86cf';
 
+// Rail layers — train stations slate-blue, live trains Frecciarossa red.
+export const TrainStationColor = '#6ea8ff';
+export const TrainColor = '#ef4444';
+
 export const CategoryColors: Record<string, string> = {
   stations: Colors.cyan,
   taxi: Colors.yellow,
@@ -25,6 +29,8 @@ export const CategoryColors: Record<string, string> = {
   busstops_urban: BusUrbanColor,
   busstops_extraurban: BusExtraColor,
   buses: Colors.orange,
+  trainstations: TrainStationColor,
+  trains: TrainColor,
 };
 
 export const CategoryIcons: Record<string, string> = {
@@ -35,6 +41,8 @@ export const CategoryIcons: Record<string, string> = {
   busstops_urban: '🚏',
   busstops_extraurban: '🚏',
   buses: '🚍',
+  trainstations: '🚉',
+  trains: '🚆',
 };
 
 export const CategoryLabels: Record<string, string> = {
@@ -45,4 +53,17 @@ export const CategoryLabels: Record<string, string> = {
   busstops_urban: 'Fermate urbane',
   busstops_extraurban: 'Fermate extraurbane',
   buses: 'Bus in tempo reale',
+  trainstations: 'Stazioni ferroviarie',
+  trains: 'Treni in tempo reale',
+};
+
+// Per-brand display colour for trains (mirrors the backend BRANDS table).
+export const TrainBrandColors: Record<string, string> = {
+  frecciarossa: '#c4122e',
+  italo: '#9d2235',
+  eurocity: '#2a4d8f',
+  intercity: '#3f7c8c',
+  regionale_v: '#e0762a',
+  regionale: '#2f9e44',
+  trentino: '#d11f2d',
 };

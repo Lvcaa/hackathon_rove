@@ -1,7 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, Animated, StyleSheet } from 'react-native';
 import { CategoryKey, Stats } from '../types/mobility';
-import { Colors, CategoryColors, CategoryIcons, CategoryLabels } from '../constants/colors';
+import {
+  Colors, CategoryColors, CategoryIcons, CategoryLabels,
+  TrainStationColor, TrainColor,
+} from '../constants/colors';
 
 interface Props {
   visible: Set<CategoryKey>;
@@ -17,6 +20,8 @@ const LAYERS: CategoryKey[] = [
   'busstops_urban',
   'busstops_extraurban',
   'buses',
+  'trainstations',
+  'trains',
 ];
 
 const STATS: { key: keyof Stats; label: string; icon: string; color: string }[] = [
@@ -26,6 +31,8 @@ const STATS: { key: keyof Stats; label: string; icon: string; color: string }[] 
   { key: 'parking_zones', label: 'Parcheggi',    icon: '🅿️', color: Colors.green  },
   { key: 'busstops',      label: 'Fermate bus',  icon: '🚌', color: Colors.orange },
   { key: 'buses_live',    label: 'Bus in corsa', icon: '🚍', color: Colors.orange },
+  { key: 'trainstations', label: 'Staz. treni',  icon: '🚉', color: TrainStationColor },
+  { key: 'trains_live',   label: 'Treni in corsa', icon: '🚆', color: TrainColor },
 ];
 
 // Presentational animated switch — the whole row owns the press, so this
