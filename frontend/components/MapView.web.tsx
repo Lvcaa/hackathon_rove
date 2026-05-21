@@ -8,15 +8,21 @@ import L from 'leaflet';
 import {
   MobilityData, MobilityFeature, MobilityCollection, CategoryKey,
   BusVehicle, BusKind, StopSchedule, Departure,
+  TrainVehicle, RailCollection, TrainBoard,
 } from '../types/mobility';
 import { LiveLocation, LocationStatus } from '../hooks/useLiveLocation';
 import { RouteSuggestion, MODE_META } from '../types/routing';
-import { CategoryColors, CategoryIcons, CategoryLabels } from '../constants/colors';
+import {
+  CategoryColors, CategoryIcons, CategoryLabels, TrainStationColor,
+} from '../constants/colors';
 
 interface Props {
   data: MobilityData;
   busStops: MobilityCollection;
   busVehicles: BusVehicle[];
+  trainStations: MobilityCollection;
+  rail: RailCollection;
+  trainVehicles: TrainVehicle[];
   visibleCategories: Set<CategoryKey>;
   selectedFeature: MobilityFeature | null;
   onFeatureSelect: (feature: MobilityFeature, category: CategoryKey) => void;
@@ -167,6 +173,19 @@ function injectStyles() {
       100% { transform:scale(3); opacity:0; }
     }
     @keyframes cs-locate-spin { to { transform:rotate(360deg); } }
+
+    /* Live train marker — brand-coloured glow, glide between 4 s polls. */
+    .cs-train-wrap { position:relative; }
+    .cs-train-wrap.ghost { opacity:0.5; }
+    .cs-train-rot { line-height:0; filter: drop-shadow(0 2px 5px rgba(0,0,0,0.6)); }
+    .cs-train-glow {
+      position:absolute; left:50%; top:50%; width:30px; height:30px;
+      margin:-15px 0 0 -15px; border-radius:50%; pointer-events:none;
+      will-change:transform,opacity;
+      animation: cs-glow-pulse 2.8s ease-in-out infinite;
+    }
+    .cs-train-marker { transition: transform 4s linear; }
+    .leaflet-zoom-anim .cs-train-marker { transition: none; }
   `;
   document.head.appendChild(style);
 }
@@ -876,7 +895,8 @@ function LocateButton({ status, onPress }: {
       onClick={onPress}
       title={title}
       style={{
-        position: 'absolute', right: 10, bottom: 116, zIndex: 1000,
+        // bottom = zoom-bar height (94) + leaflet margin (10) + gap (16) = 120
+        position: 'absolute', right: 10, bottom: 120, zIndex: 1000,
         width: 44, height: 44, borderRadius: 16,
         background: 'rgba(18,18,20,0.55)',
         backdropFilter: 'blur(22px) saturate(180%)',
@@ -894,11 +914,20 @@ function LocateButton({ status, onPress }: {
           border: '2px solid rgba(255,255,255,0.2)', borderTopColor: '#3b82f6',
           animation: 'cs-locate-spin 0.8s linear infinite',
         }} />
-      ) : (
+      ) : tracking ? (
+        /* Tracking: filled target — "re-centre on me" */
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="9" cy="9" r="3.8" stroke={accent} strokeWidth="1.7"/>
-          <path d="M9 1.5V4.5M9 13.5V16.5M1.5 9H4.5M13.5 9H16.5"
-            stroke={accent} strokeWidth="1.7" strokeLinecap="round"/>
+          <circle cx="9" cy="9" r="5.5" stroke={accent} strokeWidth="1.7"/>
+          <circle cx="9" cy="9" r="2.2" fill={accent}/>
+          <path d="M9 1.5V3.5M9 14.5V16.5M1.5 9H3.5M14.5 9H16.5"
+            stroke={accent} strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+      ) : (
+        /* Idle/error: location pin — "find me" */
+        <svg width="14" height="18" viewBox="0 0 14 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M7 0C3.13 0 0 3.13 0 7C0 12.25 7 18 7 18C7 18 14 12.25 14 7C14 3.13 10.87 0 7 0Z"
+            fill={accent}/>
+          <circle cx="7" cy="7" r="2.6" fill="rgba(13,14,20,0.85)"/>
         </svg>
       )}
     </div>
@@ -1030,16 +1059,375 @@ function RouteLayer({ route }: { route: RouteSuggestion }) {
   );
 }
 
+// ── Trains: railway line, stations and live vehicles ───────────────────────────
+
+const RAIL_COLORS: Record<string, string> = {
+  brennero: '#8b97b5',   // Verona–Bolzano main line
+  ftm: '#d98a3a',        // Trento–Malè (Trentino Trasporti)
+};
+const RAIL_LABELS: Record<string, string> = {
+  brennero: 'Linea del Brennero',
+  ftm: 'Trento–Malè–Mezzana',
+};
+
+// Real OSM track alignment, drawn as a faint dashed line beneath everything.
+function RailLayer({ rail }: { rail: RailCollection }) {
+  return (
+    <Pane name="cs-rail" style={{ zIndex: 405 }}>
+      {rail.features.map((f, i) => {
+        const pts = f.geometry.coordinates.map(
+          ([lng, lat]) => [lat, lng] as [number, number],
+        );
+        const color = RAIL_COLORS[f.properties.line] ?? '#8b97b5';
+        return (
+          <React.Fragment key={i}>
+            <Polyline positions={pts} pane="cs-rail" interactive={false}
+              pathOptions={{ color, weight: 6, opacity: 0.12 }} />
+            <Polyline positions={pts} pane="cs-rail" interactive={false}
+              pathOptions={{ color, weight: 1.7, opacity: 0.65, dashArray: '2 5' }} />
+          </React.Fragment>
+        );
+      })}
+    </Pane>
+  );
+}
+
+// Train marker height scales with the train's real length (51–280 m).
+function trainHeight(lengthM: number): number {
+  return Math.max(22, Math.min(56, Math.round(lengthM * 0.15) + 12));
+}
+
+// Top-down train icon. Front = top (North = 0°); fast services get a tapered
+// aerodynamic nose, regional/Trentino ones a blunt cab.
+function trainSvg(color: string, h: number, fast: boolean): string {
+  const vb = Math.round(h * 2);
+  const noseEnd = fast ? 17 : 9;     // y where the body reaches full width
+  const tail = vb - 7;
+  const body = fast
+    ? `M14 2 C9 2 5 ${noseEnd - 7} 5 ${noseEnd} L5 ${tail} Q5 ${vb - 2} 10 ${vb - 2} `
+      + `L18 ${vb - 2} Q23 ${vb - 2} 23 ${tail} L23 ${noseEnd} C23 ${noseEnd - 7} 19 2 14 2 Z`
+    : `M10 3 L18 3 Q23 3 23 8 L23 ${tail} Q23 ${vb - 2} 18 ${vb - 2} `
+      + `L10 ${vb - 2} Q5 ${vb - 2} 5 ${tail} L5 8 Q5 3 10 3 Z`;
+  const winY = Math.round(vb * 0.34);
+  const winH = Math.round(vb * 0.40);
+  const windshield = fast
+    ? `<path d="M14 ${noseEnd - 1} C10 ${noseEnd - 1} 8 ${noseEnd + 5} 8 ${noseEnd + 8} `
+      + `L20 ${noseEnd + 8} C20 ${noseEnd + 5} 18 ${noseEnd - 1} 14 ${noseEnd - 1} Z" `
+      + `fill="rgba(255,255,255,0.34)"/>`
+    : `<rect x="8.5" y="6" width="11" height="7" rx="3" fill="rgba(255,255,255,0.30)"/>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="${h}" viewBox="0 0 28 ${vb}" fill="none">
+    <path d="${body}" fill="${color}" stroke="rgba(255,255,255,0.22)" stroke-width="0.8"/>
+    ${windshield}
+    <rect x="6" y="${winY}" width="3.4" height="${winH}" rx="1.7" fill="rgba(255,255,255,0.22)"/>
+    <rect x="18.6" y="${winY}" width="3.4" height="${winH}" rx="1.7" fill="rgba(255,255,255,0.22)"/>
+    <rect x="9" y="${Math.round(vb / 2 - 1)}" width="10" height="2.4" rx="1.2" fill="rgba(0,0,0,0.28)"/>
+    <rect x="9" y="${vb - 6}" width="10" height="2.6" rx="1.3" fill="rgba(255,170,40,0.55)"/>
+  </svg>`;
+}
+
+function createTrainIcon(train: TrainVehicle, bearing: number) {
+  const h = trainHeight(train.lengthM);
+  const size = Math.max(h, 38);   // square wrap keeps rotation centred + fits glow
+  const glow = train.live
+    ? `<div class="cs-train-glow" style="background:radial-gradient(closest-side, ${train.color}cc, ${train.color}00);"></div>`
+    : '';
+  return L.divIcon({
+    className: 'cs-train-marker',
+    html: `<div class="cs-train-wrap${train.live ? '' : ' ghost'}" style="width:${size}px;height:${size}px;">
+      ${glow}
+      <div class="cs-train-rot" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(${bearing}deg);">
+        ${trainSvg(train.color, h, train.fast)}
+      </div>
+    </div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+    popupAnchor: [0, -(h / 2) - 4],
+  });
+}
+
+function createTrainStationIcon() {
+  const c = TrainStationColor;
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      width:34px;height:34px;border-radius:10px;
+      background:${c}26;border:2.5px solid ${c};
+      display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;
+      box-shadow:0 0 16px ${c}55,0 2px 8px rgba(0,0,0,0.5);
+    ">🚉</div>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+    popupAnchor: [0, -20],
+  });
+}
+
+function TrainBoardRow({ d }: { d: TrainBoard['departures'][number] }) {
+  const onTime = d.delay <= 0;
+  const delayColor = onTime ? '#34d399' : d.delay <= 5 ? '#fbbf24' : '#f87171';
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 9, padding: '7px 0',
+      borderTop: '1px solid rgba(255,255,255,0.06)',
+    }}>
+      <div style={{ flexShrink: 0, width: 38, textAlign: 'center' }}>
+        <div style={{ fontSize: 12.5, fontWeight: 800, color: '#fff', lineHeight: 1.1 }}>{d.time}</div>
+        <div style={{ fontSize: 8.5, fontWeight: 700, color: delayColor, lineHeight: 1.3 }}>
+          {onTime ? 'in orario' : `+${d.delay}′`}
+        </div>
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <span style={{
+          background: d.color, color: '#fff', borderRadius: 4,
+          fontSize: 9, fontWeight: 800, padding: '2px 5px',
+        }}>{d.number}</span>
+        <div style={{
+          fontSize: 11, color: 'rgba(255,255,255,0.82)', fontWeight: 500, marginTop: 3,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>→ {d.destination}</div>
+      </div>
+      <div style={{ flexShrink: 0, textAlign: 'center', minWidth: 30 }}>
+        <div style={{
+          fontSize: 8, color: 'rgba(255,255,255,0.4)', fontWeight: 700,
+          textTransform: 'uppercase', letterSpacing: '0.04em',
+        }}>Bin</div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: '#fff', lineHeight: 1.1 }}>
+          {d.platform || '—'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TrainStationPopup({ feature, board, status, refTime, onTimeChange }: {
+  feature: MobilityFeature;
+  board: TrainBoard | null;
+  status: 'idle' | 'loading' | 'error';
+  refTime: string;
+  onTimeChange: (t: string) => void;
+}) {
+  const name = String(feature.properties.name || 'Stazione');
+  const nameDe = String(feature.properties.name_de || '');
+  const line = String(feature.properties.line || '');
+  const color = TrainStationColor;
+  const timeValue = refTime || board?.time || '';
+
+  return (
+    <div style={{ padding: '14px 16px 12px', minWidth: 268, maxWidth: 300 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 9, paddingRight: 18 }}>
+        <div style={{
+          width: 32, height: 32, borderRadius: 9,
+          background: color + '22', border: `1.5px solid ${color}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, flexShrink: 0,
+        }}>🚉</div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 13, color: '#fff', lineHeight: 1.2 }}>
+            {name}{nameDe ? ` · ${nameDe}` : ''}
+          </div>
+          <div style={{ fontSize: 10, color, marginTop: 2, fontWeight: 600 }}>
+            {RAIL_LABELS[line] ?? 'Stazione ferroviaria'}
+          </div>
+        </div>
+      </div>
+
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6, marginTop: 4,
+        borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 10,
+      }}>
+        <span style={{
+          flex: 1, fontSize: 9, color: 'rgba(255,255,255,0.45)',
+          letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 700,
+        }}>Treni in partenza</span>
+        <input
+          type="time"
+          value={timeValue}
+          onChange={(e) => onTimeChange(e.target.value)}
+          style={{
+            background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.14)',
+            borderRadius: 6, color: '#fff', fontSize: 11, fontWeight: 600,
+            padding: '3px 6px', outline: 'none', colorScheme: 'dark',
+          }}
+        />
+      </div>
+
+      <div style={{ maxHeight: 256, overflowY: 'auto' }}>
+        {status === 'loading' && <div style={dimStyle}>Caricamento orari…</div>}
+        {status === 'error' && <div style={dimStyle}>Orari non disponibili</div>}
+        {status === 'idle' && board && board.departures.length === 0 && (
+          <div style={dimStyle}>Nessun treno in programma</div>
+        )}
+        {status === 'idle' && board?.departures.map((d, i) => (
+          <TrainBoardRow key={i} d={d} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// A train station. Its departure board (real ViaggiaTreno data for the
+// Brennero line) is fetched lazily, only when the station is clicked.
+function TrainStationMarker({ feature, icon }: {
+  feature: MobilityFeature;
+  icon: L.DivIcon;
+}) {
+  const coords = feature.geometry.coordinates as number[];
+  const code = String(feature.properties.code ?? '');
+
+  const [board, setBoard] = useState<TrainBoard | null>(null);
+  const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [refTime, setRefTime] = useState('');
+  const reqId = useRef(0);
+
+  const load = useCallback((time: string) => {
+    if (!code) { setStatus('error'); return; }
+    const id = ++reqId.current;
+    setStatus('loading');
+    const q = time ? `?time=${encodeURIComponent(time)}` : '';
+    fetch(`${API_BASE}/api/trainstations/${encodeURIComponent(code)}/board${q}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('http'))))
+      .then((d: TrainBoard) => {
+        if (id !== reqId.current) return;
+        setBoard(d);
+        setStatus('idle');
+      })
+      .catch(() => { if (id === reqId.current) setStatus('error'); });
+  }, [code]);
+
+  const handleTimeChange = useCallback((t: string) => {
+    setRefTime(t);
+    load(t);
+  }, [load]);
+
+  return (
+    <Marker
+      position={[coords[1], coords[0]]}
+      icon={icon}
+      pane="cs-train-stations"
+      eventHandlers={{
+        click: () => { if (!board && status !== 'loading') load(refTime); },
+      }}
+    >
+      <Popup
+        closeButton
+        minWidth={268}
+        autoPanPaddingTopLeft={[256, 16]}
+        autoPanPaddingBottomRight={[150, 16]}
+      >
+        <TrainStationPopup
+          feature={feature}
+          board={board}
+          status={status}
+          refTime={refTime}
+          onTimeChange={handleTimeChange}
+        />
+      </Popup>
+    </Marker>
+  );
+}
+
+function TrainStationsLayer({ features }: { features: MobilityFeature[] }) {
+  const icon = useMemo(createTrainStationIcon, []);
+  return (
+    <Pane name="cs-train-stations" style={{ zIndex: 552 }}>
+      {features.map((f, i) => (
+        <TrainStationMarker key={String(f.properties.code ?? i)} feature={f} icon={icon} />
+      ))}
+    </Pane>
+  );
+}
+
+function TrainVehiclePopup({ train }: { train: TrainVehicle }) {
+  const live = train.live;
+  const onTime = train.delay <= 0;
+  const delayColor = onTime ? '#34d399' : train.delay <= 5 ? '#fbbf24' : '#f87171';
+  const muted = 'rgba(255,255,255,0.5)';
+  const rows: [string, string, string?][] = [
+    ['Destinazione', train.headsign || '—'],
+    ...(live ? [['Ritardo', onTime ? 'In orario' : `+${train.delay} min`, delayColor] as [string, string, string]] : []),
+    ['Velocità', `${train.speed} km/h`],
+    ['Composizione', `${train.cars} carrozze · ${train.lengthM} m`],
+  ];
+  return (
+    <div style={{ padding: '14px 18px 12px', minWidth: 210 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, paddingRight: 18 }}>
+        <div style={{
+          minWidth: 44, height: 30, borderRadius: 7, padding: '0 8px',
+          background: train.color, border: '2px solid rgba(255,255,255,0.25)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 12, fontWeight: 800, color: '#fff', flexShrink: 0,
+        }}>{train.number}</div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 13.5, color: '#fff' }}>{train.brandLabel}</div>
+          <div style={{ fontSize: 11, color: train.color, marginTop: 2, fontWeight: 600 }}>
+            {train.fast ? 'Alta velocità / lunga percorrenza' : 'Servizio regionale'}
+          </div>
+        </div>
+      </div>
+      {rows.map(([k, v, c]) => (
+        <div key={k} style={{
+          display: 'flex', justifyContent: 'space-between', gap: 12,
+          padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)',
+        }}>
+          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{k}</span>
+          <span style={{ fontSize: 11, color: c ?? 'rgba(255,255,255,0.78)', fontWeight: 600, textAlign: 'right' }}>{v}</span>
+        </div>
+      ))}
+      <div style={{
+        marginTop: 10, padding: '6px 0', textAlign: 'center', borderRadius: 8,
+        background: live ? train.color + '26' : 'rgba(255,255,255,0.06)',
+        border: `1px solid ${live ? train.color + '4d' : 'rgba(255,255,255,0.14)'}`,
+        fontSize: 11, fontWeight: 700, color: live ? train.color : muted,
+      }}>
+        {live ? '● In tempo reale' : '○ Posizione stimata da orario'}
+      </div>
+    </div>
+  );
+}
+
+// Live trains — viewport-culled, icons cached so the CSS glide survives polls.
+function LiveTrainLayer({ trains }: { trains: TrainVehicle[] }) {
+  const iconCache = useRef<Map<string, L.DivIcon>>(new Map());
+  const { bounds } = useMapViewport();
+
+  const visible = useMemo(() => {
+    const padded = bounds.pad(VIEWPORT_PAD);
+    return trains.filter((t) => padded.contains([t.lat, t.lon]));
+  }, [trains, bounds]);
+
+  return (
+    <Pane name="cs-trains" style={{ zIndex: 606 }}>
+      {visible.map((train) => {
+        const bucket = Math.round(train.bearing / 15) * 15;
+        const key = `${train.id}:${train.brand}:${train.live}:${train.lengthM}:${bucket}`;
+        let icon = iconCache.current.get(key);
+        if (!icon) {
+          icon = createTrainIcon(train, bucket);
+          iconCache.current.set(key, icon);
+        }
+        return (
+          <Marker key={train.id} position={[train.lat, train.lon]} icon={icon} pane="cs-trains">
+            <Popup closeButton>
+              <TrainVehiclePopup train={train} />
+            </Popup>
+          </Marker>
+        );
+      })}
+    </Pane>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function MapView({
-  data, busStops, busVehicles, visibleCategories, selectedFeature,
+  data, busStops, busVehicles, trainStations, rail, trainVehicles,
+  visibleCategories, selectedFeature,
   onFeatureSelect, onNavigate,
   userLocation, locationStatus = 'idle', recenterNonce = 0, onLocate,
   activeRoute, onOpenRouting, routingPanelOpen = false,
 }: Props) {
   const showUrbanStops = visibleCategories.has('busstops_urban');
   const showExtraStops = visibleCategories.has('busstops_extraurban');
+  const showTrainStations = visibleCategories.has('trainstations');
+  const showTrains = visibleCategories.has('trains');
   // Memoised so the array identity is stable across the 3 s bus refreshes —
   // otherwise BusStopsLayer would re-cluster (and remount markers) every tick.
   const urbanStops = useMemo(
@@ -1084,6 +1472,14 @@ export default function MapView({
         )}
         {visibleCategories.has('buses') && (
           <LiveBusLayer vehicles={busVehicles} />
+        )}
+        {/* Railway track sits beneath the markers; shown with either rail layer. */}
+        {(showTrainStations || showTrains) && <RailLayer rail={rail} />}
+        {showTrainStations && (
+          <TrainStationsLayer features={trainStations.features} />
+        )}
+        {showTrains && (
+          <LiveTrainLayer trains={trainVehicles} />
         )}
         {userLocation && (
           <UserLocationLayer location={userLocation} recenterNonce={recenterNonce} />

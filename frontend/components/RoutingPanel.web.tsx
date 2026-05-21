@@ -525,7 +525,12 @@ export default function RoutingPanel({
         padding: '13px 14px 11px',
         borderBottom: '1px solid rgba(255,255,255,0.08)',
       }}>
-        <span style={{ fontSize: 15 }}>🧭</span>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="3.5" cy="3.5" r="2" fill="rgba(255,255,255,0.72)"/>
+          <circle cx="12.5" cy="12.5" r="2" stroke="rgba(255,255,255,0.72)" strokeWidth="1.4"/>
+          <path d="M3.5 5.5V9C3.5 10.7 5 12.5 8 12.5H10.5"
+            stroke="rgba(255,255,255,0.72)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
         <span style={{
           flex: 1, fontSize: 11, fontWeight: 800, letterSpacing: '0.09em',
           color: 'rgba(255,255,255,0.7)',
