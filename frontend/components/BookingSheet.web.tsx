@@ -13,14 +13,14 @@ function injectStyles() {
   const s = document.createElement('style');
   s.id = 'cs-booking-styles';
   s.textContent = `
-    /* Pane grows out of the search bar's spot rather than sliding off-screen. */
+    /* Pane grows downward out of the search bar. */
     @keyframes cs-pane-in {
-      from { opacity: 0; transform: translateY(10px) scale(0.95); }
-      to   { opacity: 1; transform: translateY(0)    scale(1); }
+      from { opacity: 0; transform: translateY(-10px) scale(0.95); }
+      to   { opacity: 1; transform: translateY(0)     scale(1); }
     }
     @keyframes cs-pane-out {
-      from { opacity: 1; transform: translateY(0)    scale(1); }
-      to   { opacity: 0; transform: translateY(10px) scale(0.95); }
+      from { opacity: 1; transform: translateY(0)     scale(1); }
+      to   { opacity: 0; transform: translateY(-10px) scale(0.95); }
     }
     @keyframes cs-fade-in {
       from { opacity: 0; transform: translateY(8px); }
@@ -38,11 +38,11 @@ function injectStyles() {
 
     .cs-pane-in {
       animation: cs-pane-in 0.36s cubic-bezier(0.16,1,0.3,1) both;
-      transform-origin: bottom center;
+      transform-origin: top center;
     }
     .cs-pane-out {
       animation: cs-pane-out 0.28s cubic-bezier(0.4,0,1,1) both;
-      transform-origin: bottom center;
+      transform-origin: top center;
       pointer-events: none;
     }
     .cs-clear-btn { transition: opacity 0.15s ease, transform 0.15s ease; }
@@ -703,9 +703,39 @@ function BoardingPassView({ confirmation }: { confirmation: TripBookResponse }) 
 
 // ── Destination search bar (idle state) ───────────────────────────────────────
 
-const SUGGESTIONS = ['Stazione FS Rovereto', 'Stazione FS Trento'];
+export interface SuggestionItem {
+  name: string;
+  category?: 'stations' | 'taxi' | 'carsharing' | 'parking';
+}
 
-function SearchBar({ onSearch }: { onSearch: (dest: string) => void }) {
+const DEFAULT_SUGGESTIONS: SuggestionItem[] = [
+  { name: 'Stazione FS Rovereto', category: 'stations' },
+  { name: 'Stazione FS Trento',   category: 'stations' },
+];
+
+const SUGGESTION_LIMIT = 8;
+
+const CAT_COLOR: Record<NonNullable<SuggestionItem['category']>, string> = {
+  stations:   C.cyan,
+  taxi:       C.yellow,
+  carsharing: C.purple,
+  parking:    C.green,
+};
+
+const CAT_LABEL: Record<NonNullable<SuggestionItem['category']>, string> = {
+  stations:   'Stazione',
+  taxi:       'Taxi',
+  carsharing: 'Car sharing',
+  parking:    'Parcheggio',
+};
+
+function SearchBar({
+  onSearch,
+  suggestions: source = DEFAULT_SUGGESTIONS,
+}: {
+  onSearch: (dest: string) => void;
+  suggestions?: SuggestionItem[];
+}) {
   const [query, setQuery] = useState('');
   const [open, setOpen]   = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -723,9 +753,9 @@ function SearchBar({ onSearch }: { onSearch: (dest: string) => void }) {
     inputRef.current?.focus();
   }, []);
 
-  const suggestions = SUGGESTIONS.filter(
-    (s) => !query || s.toLowerCase().includes(query.toLowerCase()),
-  );
+  const q = query.trim().toLowerCase();
+  const filtered = (q ? source.filter((s) => s.name.toLowerCase().includes(q)) : source);
+  const suggestions = filtered.slice(0, SUGGESTION_LIMIT);
   const showList = open && suggestions.length > 0;
 
   return (
@@ -794,25 +824,52 @@ function SearchBar({ onSearch }: { onSearch: (dest: string) => void }) {
         </div>
 
         {showList && (
-          <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingBottom: 6 }}>
-            {suggestions.map((s) => (
-              <button
-                key={s}
-                className="cs-suggestion"
-                onMouseDown={() => submit(s)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  width: '100%', padding: '11px 14px',
-                  background: 'transparent', border: 'none',
-                  color: C.text, fontSize: 13, fontWeight: 500,
-                  fontFamily: FONT, letterSpacing: '-0.01em',
-                  cursor: 'pointer', textAlign: 'left',
-                }}
-              >
-                <span style={{ color: C.muted, display: 'flex' }}><Ico.MapPin /></span>
-                {s}
-              </button>
-            ))}
+          <div style={{
+            borderTop: '1px solid rgba(255,255,255,0.08)',
+            paddingBottom: 6,
+            maxHeight: 320,
+            overflowY: 'auto',
+          }}>
+            {suggestions.map((s, i) => {
+              const accent = s.category ? CAT_COLOR[s.category] : C.muted;
+              const label  = s.category ? CAT_LABEL[s.category] : null;
+              return (
+                <button
+                  key={`${s.name}-${i}`}
+                  className="cs-suggestion"
+                  onMouseDown={() => submit(s.name)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    width: '100%', padding: '10px 14px',
+                    background: 'transparent', border: 'none',
+                    color: C.text, fontSize: 13, fontWeight: 500,
+                    fontFamily: FONT, letterSpacing: '-0.01em',
+                    cursor: 'pointer', textAlign: 'left',
+                  }}
+                >
+                  <span style={{ color: accent, display: 'flex', flexShrink: 0 }}><Ico.MapPin /></span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {s.name}
+                  </span>
+                  {label && (
+                    <span style={{
+                      fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em',
+                      textTransform: 'uppercase', color: accent,
+                      background: accent + '14', border: `1px solid ${accent}33`,
+                      borderRadius: 6, padding: '2px 7px', flexShrink: 0,
+                    }}>{label}</span>
+                  )}
+                </button>
+              );
+            })}
+            {filtered.length > SUGGESTION_LIMIT && (
+              <div style={{
+                padding: '6px 14px 2px', fontSize: 10, color: C.faint,
+                fontFamily: FONT, letterSpacing: '0.04em',
+              }}>
+                +{filtered.length - SUGGESTION_LIMIT} altri risultati — affina la ricerca
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -954,9 +1011,10 @@ function SheetPanel({
 interface Props {
   onRouteReady?: (waypoints: [number, number][], dest: [number, number]) => void;
   searchTrigger?: { destination: string; nonce: number } | null;
+  suggestions?: SuggestionItem[];
 }
 
-export default function BookingSheet({ onRouteReady, searchTrigger }: Props) {
+export default function BookingSheet({ onRouteReady, searchTrigger, suggestions }: Props) {
   const { state, search, book, dismiss, setConfirmedFromAI } = useBooking();
   const [query, setQuery] = useState('');
   const [dismissing, setDismissing] = useState(false);
@@ -1001,25 +1059,15 @@ export default function BookingSheet({ onRouteReady, searchTrigger }: Props) {
     search(dest);
   }, [search]);
 
-  // The pane and the search bar live in one bottom-anchored, centred column,
-  // so they always share the same width and centre line — and the search bar
-  // stays visible while the pane is open.
+  // The search bar lives at the top of the viewport. The sheet panel and the
+  // AI bubble grow downward from it so they all share the same width and centre.
   return (
     <div style={{
-      position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+      position: 'fixed', top: 28, left: '50%', transform: 'translateX(-50%)',
       width: 'min(440px, calc(100vw - 48px))', zIndex: 1000,
       display: 'flex', flexDirection: 'column', gap: 10,
     }}>
-      {(state.phase !== 'idle' || dismissing) && (
-        <SheetPanel
-          state={state}
-          query={query}
-          onBook={book}
-          onDismiss={handleDismiss}
-          dismissing={dismissing}
-        />
-      )}
-      <SearchBar onSearch={handleSearch} />
+      <SearchBar onSearch={handleSearch} suggestions={suggestions} />
       {state.phase === 'idle' && (
         <>
           <div style={{
@@ -1034,6 +1082,15 @@ export default function BookingSheet({ onRouteReady, searchTrigger }: Props) {
           </div>
           <AIChatBubble onConfirmed={setConfirmedFromAI} />
         </>
+      )}
+      {(state.phase !== 'idle' || dismissing) && (
+        <SheetPanel
+          state={state}
+          query={query}
+          onBook={book}
+          onDismiss={handleDismiss}
+          dismissing={dismissing}
+        />
       )}
     </div>
   );

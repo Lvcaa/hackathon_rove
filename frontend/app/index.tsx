@@ -1,12 +1,12 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { View, StyleSheet, useWindowDimensions } from 'react-native';
 import { useMobilityData } from '../hooks/useMobilityData';
+import type { SuggestionItem } from '../components/BookingSheet.web';
 import { useLiveLocation } from '../hooks/useLiveLocation';
 import { MobilityFeature, CategoryKey } from '../types/mobility';
 import { RouteSuggestion } from '../types/routing';
 import { Colors } from '../constants/colors';
 import MapView from '../components/MapView';
-import Sidebar from '../components/Sidebar';
 import BottomSheet from '../components/BottomSheet';
 import LayerTogglePanel from '../components/LayerTogglePanel';
 import BookingSheet from '../components/BookingSheet';
@@ -52,6 +52,33 @@ export default function MapScreen() {
     category: CategoryKey;
   } | null>(null);
   const [bookingTrigger, setBookingTrigger] = useState<{ destination: string; nonce: number } | null>(null);
+
+  // Build flat suggestion list for the SearchBar autocomplete from all mobility features
+  const suggestions = useMemo<SuggestionItem[]>(() => {
+    const out: SuggestionItem[] = [
+      { name: 'Stazione FS Rovereto', category: 'stations' },
+      { name: 'Stazione FS Trento',   category: 'stations' },
+    ];
+    const pushFrom = (cat: SuggestionItem['category'], features: typeof data.stations.features) => {
+      features.forEach((f) => {
+        const p = f.properties;
+        const name = String(p.nome || p.name || p.via || p.zona || p.descrizione || '').trim();
+        if (name) out.push({ name, category: cat });
+      });
+    };
+    pushFrom('stations',   data.stations.features);
+    pushFrom('taxi',       data.taxi.features);
+    pushFrom('carsharing', data.carsharing.features);
+    pushFrom('parking',    data.parking.features);
+    // De-duplicate by name (case-insensitive), keeping first occurrence
+    const seen = new Set<string>();
+    return out.filter((s) => {
+      const k = s.name.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [data]);
 
   const handleToggleCategory = useCallback((cat: CategoryKey) => {
     setVisibleCategories((prev) => {
@@ -106,15 +133,6 @@ export default function MapScreen() {
 
   return (
     <View style={styles.container}>
-      {isDesktop && (
-        <Sidebar
-          data={data}
-          visibleCategories={visibleCategories}
-          onToggleCategory={handleToggleCategory}
-          onFeatureSelect={handleFeatureSelect}
-          selectedFeature={selectedFeature}
-        />
-      )}
       <View style={styles.mapWrapper}>
         <MapView
           data={data}
@@ -160,7 +178,7 @@ export default function MapScreen() {
             onBook={handleBookFromRoute}
           />
         )}
-        <BookingSheet searchTrigger={bookingTrigger} />
+        <BookingSheet searchTrigger={bookingTrigger} suggestions={suggestions} />
       </View>
     </View>
   );

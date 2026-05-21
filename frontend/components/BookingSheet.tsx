@@ -4,6 +4,7 @@
 interface Props {
   onRouteReady?: (waypoints: [number, number][], dest: [number, number]) => void;
   searchTrigger?: { destination: string; nonce: number } | null;
+  suggestions?: { name: string; category?: 'stations' | 'taxi' | 'carsharing' | 'parking' }[];
 }
 
 export default function BookingSheet(_props: Props) {
