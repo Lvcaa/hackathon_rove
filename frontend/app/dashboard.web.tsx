@@ -115,16 +115,25 @@ export default function DashboardScreen() {
   const [editId, setEditId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [filter, setFilter] = useState<string>('all');
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  useEffect(() => {
+  const loadParking = useCallback(() => {
     adminFetch('/admin/dashboard')
       .then(async (r) => {
         if (!r.ok) throw new Error(`/admin/dashboard returned ${r.status}: ${await r.text()}`);
         return r.json();
       })
-      .then((d) => setParking(d))
+      .then((d) => { setParking(d); setLastUpdated(new Date()); setError(null); })
       .catch((e) => { console.error('parking fetch failed:', e); setError(String(e)); });
   }, []);
+
+  // Real-time refresh — poll /admin/dashboard every 5 seconds
+  useEffect(() => {
+    loadParking();
+    const id = setInterval(loadParking, 5000);
+    return () => clearInterval(id);
+  }, [loadParking]);
 
   const loadDestinations = useCallback(() => {
     adminFetch('/admin/destinations')
@@ -265,6 +274,11 @@ export default function DashboardScreen() {
                   {parking.summary.distressed > 0 && <span style={{ color: C.red, marginLeft: 8 }}>⚠ {parking.summary.distressed} in sofferenza</span>}
                 </span>
               )}
+              {lastUpdated && (
+                <span style={{ marginLeft: 10, color: C.green }}>
+                  ● live · aggiornato {lastUpdated.toLocaleTimeString('it-IT')}
+                </span>
+              )}
             </p>
           </div>
           {!editId && (
@@ -276,6 +290,39 @@ export default function DashboardScreen() {
               }}
             >+ Aggiungi</button>
           )}
+        </div>
+
+        {/* Filter chips */}
+        <div style={{
+          padding: '12px 24px', borderBottom: `1px solid ${C.border}`,
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: 4 }}>
+            Filtra:
+          </span>
+          {[
+            { key: 'all',        label: 'Tutti',       color: C.text   },
+            { key: 'parking',    label: 'Parcheggi',   color: C.green  },
+            { key: 'station',    label: 'Stazioni',    color: C.cyan   },
+            { key: 'taxi',       label: 'Taxi',        color: C.yellow },
+            { key: 'carsharing', label: 'Car sharing', color: C.purple },
+          ].map(({ key, label, color }) => {
+            const active = filter === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                style={{
+                  background: active ? color + '22' : 'transparent',
+                  border: `1px solid ${active ? color + '66' : C.border}`,
+                  color: active ? color : C.text,
+                  borderRadius: 8, padding: '6px 14px',
+                  fontSize: 12, fontWeight: active ? 700 : 500, cursor: 'pointer',
+                  fontFamily: FONT, transition: 'all 0.15s ease',
+                }}
+              >{label}</button>
+            );
+          })}
         </div>
 
         {/* Add / Edit form */}
@@ -354,7 +401,9 @@ export default function DashboardScreen() {
             </thead>
             <tbody>
               {/* ── Destinations ── */}
-              {destinations.map((d, i) => (
+              {destinations
+                .filter((d) => filter === 'all' || filter === d.type || (filter === 'station' && d.type === 'station'))
+                .map((d, i) => (
                 <tr key={d.id} style={{
                   borderBottom: `1px solid ${C.border}`,
                   background: editId === d.id ? C.cyan + '08' : 'transparent',
@@ -385,7 +434,7 @@ export default function DashboardScreen() {
               ))}
 
               {/* ── Parking zones ── */}
-              {(parking?.zones ?? []).map((z) => {
+              {(filter === 'all' || filter === 'parking' ? (parking?.zones ?? []) : []).map((z) => {
                 const configured = z.max_capacity > 0;
                 const pct   = z.occupancy_pct;
                 const color = !configured ? 'rgba(255,255,255,0.18)'
@@ -426,7 +475,9 @@ export default function DashboardScreen() {
                 );
               })}
               {/* ── Public mobility data (fallback when admin destinations empty) ── */}
-              {publicRows.map((d) => (
+              {publicRows
+                .filter((d) => filter === 'all' || filter === d.type)
+                .map((d) => (
                 <tr key={d.id} style={{ borderBottom: `1px solid ${C.border}` }}>
                   <td style={{ padding: '12px 20px', fontWeight: 600 }}>{d.name}</td>
                   <td style={{ padding: '12px 20px' }}><TypeBadge type={d.type} /></td>
