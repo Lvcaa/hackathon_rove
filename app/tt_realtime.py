@@ -62,10 +62,14 @@ def _get(path: str, params: dict | None = None):
     return resp.json()
 
 
-def _gtfs_sec(value: str) -> int:
-    """GTFS clock time → seconds since midnight (hours may exceed 24)."""
-    h, m, s = value.split(":")
-    return int(h) * 3600 + int(m) * 60 + int(s)
+def _gtfs_sec(value: str | None) -> int:
+    """GTFS clock time ('HH:MM[:SS]') → seconds since midnight (hours may exceed 24)."""
+    parts = (value or "").split(":")
+    if len(parts) < 2:
+        raise ValueError(f"bad GTFS time: {value!r}")
+    h, m = int(parts[0]), int(parts[1])
+    s = int(parts[2]) if len(parts) > 2 and parts[2] else 0
+    return h * 3600 + m * 60 + s
 
 
 def _haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -128,8 +132,25 @@ def _load_stops() -> None:
 # Trip polling
 # ---------------------------------------------------------------------------
 
-def _fetch_route_trips(route_id: int, info: dict) -> list[dict]:
-    """Live trips currently being driven on a single route."""
+def _in_service_window(trip: dict, now_sec: int) -> bool:
+    """True if `now` falls between the trip's first departure and last arrival."""
+    st = trip.get("stopTimes") or []
+    if len(st) < 2:
+        return False
+    try:
+        first = _gtfs_sec(st[0].get("departureTime") or st[0].get("arrivalTime"))
+        last = _gtfs_sec(st[-1].get("arrivalTime") or st[-1].get("departureTime"))
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return first <= now_sec <= last
+
+
+def _fetch_route_trips(route_id: int, info: dict, now_sec: int) -> list[dict]:
+    """
+    Trips currently in progress on a route — both GPS-tracked vehicles and
+    scheduled trips that have no live signal (rendered later as on-time
+    estimates). Each kept trip is tagged with `_routeId` and `_live`.
+    """
     try:
         trips = _get(
             "/trips_new",
@@ -137,23 +158,29 @@ def _fetch_route_trips(route_id: int, info: dict) -> list[dict]:
         )
     except Exception:
         return []
-    live: list[dict] = []
+    kept: list[dict] = []
     for t in trips:
-        if not t.get("matricolaBus") or not t.get("lastEventRecivedAt"):
+        live = bool(t.get("matricolaBus") and t.get("lastEventRecivedAt"))
+        if not live and not _in_service_window(t, now_sec):
             continue
         t["_routeId"] = route_id
-        live.append(t)
-    return live
+        t["_live"] = live
+        kept.append(t)
+    return kept
 
 
 def _refresh_trips() -> None:
     items = list(_routes.items())
     if not items:
         return
+    now = datetime.datetime.now(_ROME)
+    now_sec = now.hour * 3600 + now.minute * 60 + now.second
     collected: list[dict] = []
     with ThreadPoolExecutor(max_workers=_TRIP_WORKERS) as ex:
-        for live in ex.map(lambda kv: _fetch_route_trips(*kv), items):
-            collected.extend(live)
+        for kept in ex.map(
+            lambda kv: _fetch_route_trips(kv[0], kv[1], now_sec), items
+        ):
+            collected.extend(kept)
     with _lock:
         global _live_trips
         _live_trips = collected
@@ -163,19 +190,20 @@ def _refresh_trips() -> None:
 # Position reconstruction
 # ---------------------------------------------------------------------------
 
-def _compute_position(trip: dict, now_sec: int):
+def _compute_position(trip: dict, now_sec: int, live: bool):
     """
     Place the bus along its stop sequence.
 
-    The schedule (shifted by `delay`) gives a smooth estimate; the last
-    physically detected stop (`lastSequenceDetection`) is used as a floor so
-    the estimate can glide forward but never slip behind reality.
+    For GPS-tracked trips the schedule is shifted by the reported `delay` and
+    floored at the last physically detected stop. For scheduled-only trips
+    (`live=False`) the bus is placed at its plain on-time position — an
+    estimate of where it *should* be.
     """
     st = trip.get("stopTimes") or []
     if len(st) < 2:
         return None
 
-    delay_sec = (trip.get("delay") or 0.0) * 60.0
+    delay_sec = (trip.get("delay") or 0.0) * 60.0 if live else 0.0
     eff = now_sec - delay_sec  # where the bus should be on the unshifted schedule
 
     # Segment picked by the schedule estimate.
@@ -190,13 +218,14 @@ def _compute_position(trip: dict, now_sec: int):
         first = _gtfs_sec(st[0].get("departureTime") or st[0].get("arrivalTime"))
         seg = 0 if eff < first else len(st) - 2
 
-    # Floor at the last physically detected stop.
-    last_seq = trip.get("lastSequenceDetection") or 0
-    last_idx = next(
-        (i for i, s in enumerate(st) if s.get("stopSequence") == last_seq), None
-    )
-    if last_idx is not None and seg < last_idx <= len(st) - 2:
-        seg = last_idx
+    # Floor at the last physically detected stop (GPS-tracked trips only).
+    if live:
+        last_seq = trip.get("lastSequenceDetection") or 0
+        last_idx = next(
+            (i for i, s in enumerate(st) if s.get("stopSequence") == last_seq), None
+        )
+        if last_idx is not None and seg < last_idx <= len(st) - 2:
+            seg = last_idx
 
     a_stop, b_stop = st[seg], st[seg + 1]
     a = _stops.get(a_stop["stopId"])
@@ -222,7 +251,11 @@ def _compute_position(trip: dict, now_sec: int):
 # ---------------------------------------------------------------------------
 
 def get_live_buses() -> dict:
-    """GeoJSON FeatureCollection of live buses, positions computed for now."""
+    """
+    GeoJSON FeatureCollection of buses currently in service. Features carry a
+    `live` flag: true = real GPS position, false = on-time schedule estimate
+    for a trip with no live signal (or one whose GPS feed has gone stale).
+    """
     now = datetime.datetime.now(_ROME)
     now_sec = now.hour * 3600 + now.minute * 60 + now.second
     now_utc = datetime.datetime.now(datetime.timezone.utc)
@@ -232,10 +265,15 @@ def get_live_buses() -> dict:
 
     features: list[dict] = []
     for trip in trips:
-        event = _parse_event(trip.get("lastEventRecivedAt"))
-        if event and (now_utc - event).total_seconds() > _STALE_EVENT_SEC:
-            continue
-        pos = _compute_position(trip, now_sec)
+        live = bool(trip.get("_live"))
+        if live:
+            event = _parse_event(trip.get("lastEventRecivedAt"))
+            if event and (now_utc - event).total_seconds() > _STALE_EVENT_SEC:
+                live = False  # GPS feed went stale → fall back to a schedule estimate
+        try:
+            pos = _compute_position(trip, now_sec, live)
+        except (ValueError, TypeError, AttributeError):
+            pos = None  # malformed schedule data — skip this trip
         if pos is None:
             continue
         lat, lon, bearing, speed = pos
@@ -244,13 +282,14 @@ def get_live_buses() -> dict:
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": [lon, lat]},
             "properties": {
-                "id": f"bus-{trip.get('matricolaBus')}",
+                "id": f"trip-{trip.get('tripId')}",
                 "route": info.get("short", "?"),
                 "kind": info.get("kind", "urban"),
                 "bearing": round(bearing),
                 "speed": speed,
-                "delay": round(trip.get("delay") or 0.0),
+                "delay": round(trip.get("delay") or 0.0) if live else 0,
                 "headsign": (trip.get("tripHeadsign") or "").strip(),
+                "live": live,
             },
         })
     return {"type": "FeatureCollection", "features": features}

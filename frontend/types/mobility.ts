@@ -38,6 +38,7 @@ export interface BusVehicle {
   route: string;
   speed: number;
   kind: BusKind;
+  live: boolean;      // true = real GPS position; false = on-time schedule estimate
   delay?: number;     // minutes late (real-time); negative = early
   headsign?: string;  // trip destination
 }

@@ -79,7 +79,7 @@ function simulateBuses(t: number): BusVehicle[] {
       const lat = a[0] + segFrac * (b[0] - a[0]);
       const lon = a[1] + segFrac * (b[1] - a[1]);
       const bearing = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI + 360) % 360;
-      buses.push({ id: `bus-${line}-${i}`, lat, lon, bearing, route: line, speed: 30 + (i * 5), kind });
+      buses.push({ id: `bus-${line}-${i}`, lat, lon, bearing, route: line, speed: 30 + (i * 5), kind, live: true });
     }
   }
   return buses;
@@ -156,7 +156,7 @@ export function useMobilityData() {
         try {
           const res = await fetch(`${API_BASE}/api/buses/live`);
           if (!res.ok) throw new Error('not ok');
-          const col: { features: { geometry: { coordinates: number[] }; properties: Record<string, string | number> }[] } = await res.json();
+          const col: { features: { geometry: { coordinates: number[] }; properties: Record<string, string | number | boolean> }[] } = await res.json();
           const vehicles: BusVehicle[] = col.features.map((f) => ({
             id: String(f.properties.id),
             lat: f.geometry.coordinates[1],
@@ -165,6 +165,7 @@ export function useMobilityData() {
             route: String(f.properties.route),
             speed: Number(f.properties.speed),
             kind: f.properties.kind === 'extraurban' ? 'extraurban' : 'urban',
+            live: f.properties.live !== false,
             delay: f.properties.delay != null ? Number(f.properties.delay) : undefined,
             headsign: f.properties.headsign != null ? String(f.properties.headsign) : undefined,
           }));

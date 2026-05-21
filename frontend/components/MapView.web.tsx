@@ -101,6 +101,8 @@ function injectStyles() {
     .bus-vehicle-inner { display:inline-block; }
     .bus-vehicle-inner.urban { animation: bus-glow-urban 2.4s ease-in-out infinite; }
     .bus-vehicle-inner.extra { animation: bus-glow-extra 2.4s ease-in-out infinite; }
+    /* Schedule estimate (no live GPS): dimmed, no glow. */
+    .bus-vehicle-inner.ghost { opacity:0.42; filter: drop-shadow(0 1px 3px rgba(0,0,0,0.55)); }
 
     /* Glide the marker between polled positions (matches BUS_REFRESH_MS).
        Suppressed during zoom so buses don't lag behind the map. */
@@ -158,13 +160,15 @@ function busSvg(route: string, body: string) {
   </svg>`;
 }
 
-function createBusVehicleIcon(route: string, bearing: number, kind: BusKind) {
-  const glowClass = kind === 'extraurban' ? 'extra' : 'urban';
+function createBusVehicleIcon(route: string, bearing: number, kind: BusKind, live: boolean) {
+  // Live buses glow (green/blue); schedule estimates use the dimmed, no-glow
+  // `ghost` style so they read as "where the bus should be", not a real fix.
+  const stateClass = live ? (kind === 'extraurban' ? 'extra' : 'urban') : 'ghost';
   return L.divIcon({
     className: 'cs-bus-marker',
     // Outer div carries the glow-pulse animation; inner div carries the rotation.
     // Separating them prevents the animation from interfering with position glide.
-    html: `<div class="bus-vehicle-inner ${glowClass}">
+    html: `<div class="bus-vehicle-inner ${stateClass}">
       <div style="transform:rotate(${bearing}deg);transform-origin:13px 20px;line-height:0;">
         ${busSvg(route, busColor(kind))}
       </div>
@@ -352,10 +356,12 @@ function BusStopPopup({ feature, schedule, status, refTime, onTimeChange }: {
 
 function BusVehiclePopup({ bus }: { bus: BusVehicle }) {
   const color = busColor(bus.kind);
+  const live = bus.live;
   const delay = bus.delay ?? 0;
   const onTime = delay <= 0;
   const delayColor = onTime ? '#34d399' : delay <= 3 ? '#fbbf24' : '#f87171';
   const delayText = onTime ? 'In orario' : `+${delay} min`;
+  const muted = 'rgba(255,255,255,0.5)';
   return (
     <div style={{ padding: '14px 18px 12px', minWidth: 180 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 8, paddingRight: 18 }}>
@@ -378,12 +384,14 @@ function BusVehiclePopup({ bus }: { bus: BusVehicle }) {
           <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 600, textAlign: 'right' }}>{bus.headsign}</span>
         </div>
       )}
+      {live && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Ritardo</span>
+          <span style={{ fontSize: 11, color: delayColor, fontWeight: 700 }}>{delayText}</span>
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Ritardo</span>
-        <span style={{ fontSize: 11, color: delayColor, fontWeight: 700 }}>{delayText}</span>
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Velocità</span>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Velocità {live ? '' : 'media'}</span>
         <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 600 }}>{bus.speed} km/h</span>
       </div>
       <div style={{
@@ -391,11 +399,11 @@ function BusVehiclePopup({ bus }: { bus: BusVehicle }) {
         padding: '6px 0',
         textAlign: 'center',
         borderRadius: 8,
-        background: color + '26',
-        border: `1px solid ${color}4d`,
-        fontSize: 11, fontWeight: 700, color,
+        background: live ? color + '26' : 'rgba(255,255,255,0.06)',
+        border: `1px solid ${live ? color + '4d' : 'rgba(255,255,255,0.14)'}`,
+        fontSize: 11, fontWeight: 700, color: live ? color : muted,
       }}>
-        ● In tempo reale
+        {live ? '● In tempo reale' : '○ Posizione stimata da orario'}
       </div>
     </div>
   );
@@ -631,15 +639,23 @@ function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
   // Cache icons by bus + bearing bucket so the marker element persists across
   // polls and `.cs-bus-marker { transition: transform }` can animate position.
   const iconCache = useRef<Map<string, L.DivIcon>>(new Map());
+  const { bounds } = useMapViewport();
+
+  // Cull off-screen buses — the live + scheduled fleet is several hundred
+  // markers, but only those in view need to be in the DOM.
+  const visible = useMemo(() => {
+    const padded = bounds.pad(VIEWPORT_PAD);
+    return vehicles.filter((b) => padded.contains([b.lat, b.lon]));
+  }, [vehicles, bounds]);
 
   return (
     <>
-      {vehicles.map((bus) => {
+      {visible.map((bus) => {
         const bucket = Math.round(bus.bearing / 15) * 15;
-        const cacheKey = `${bus.id}:${bus.route}:${bus.kind}:${bucket}`;
+        const cacheKey = `${bus.id}:${bus.route}:${bus.kind}:${bus.live}:${bucket}`;
         let icon = iconCache.current.get(cacheKey);
         if (!icon) {
-          icon = createBusVehicleIcon(bus.route, bucket, bus.kind);
+          icon = createBusVehicleIcon(bus.route, bucket, bus.kind, bus.live);
           iconCache.current.set(cacheKey, icon);
         }
         return (
