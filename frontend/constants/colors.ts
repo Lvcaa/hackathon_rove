@@ -66,4 +66,5 @@ export const TrainBrandColors: Record<string, string> = {
   regionale_v: '#e0762a',
   regionale: '#2f9e44',
   trentino: '#d11f2d',
+  valsugana: '#1f9e8f',
 };

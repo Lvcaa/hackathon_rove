@@ -1,7 +1,5 @@
 """
-Train router — Brennero corridor (Verona ↔ Bolzano) + the Trento–Malè line.
-
-Two railways are modelled:
+Train router — three railways around Trento/Rovereto.
 
   * ``brennero`` — the Verona–Bolzano main line. Real schedules, platforms,
     delays and live train positions come from RFI's ViaggiaTreno service (the
@@ -10,10 +8,13 @@ Two railways are modelled:
     EuroCity. Italo runs no ViaggiaTreno-visible service here, so its trains
     are generated from a synthetic timetable.
   * ``ftm`` — the Trentino Trasporti narrow-gauge Trento–Malè–Mezzana line.
-    Its stations, schedules and live trains come from the Trentino Trasporti
-    ``gtlservice`` API (route 352), the same feed the live-bus tracker uses.
+  * ``valsugana`` — the Trento–Bassano del Grappa line.
 
-Track geometry is the real OSM alignment (route relations 1773670 / 1772516),
+Both Trentino Trasporti lines get their stations, schedules and live trains
+from the Trentino Trasporti ``gtlservice`` API, the same feed the live-bus
+tracker uses.
+
+Track geometry is the real OSM alignment (route relations in _RAIL_RELATIONS),
 downloaded once and cached on disk. Every train marker is snapped onto that
 polyline, so trains visibly follow the rails. A train with a fresh GPS fix is
 shown live; otherwise its position is reconstructed from the scheduled stop
@@ -49,13 +50,20 @@ _OVERPASS = "https://overpass-api.de/api/interpreter"
 _HEADERS = {"User-Agent": "CommuteSync Hackathon/1.0"}
 
 # OSM route relations carrying the real track alignment of each line.
-_RAIL_RELATIONS = {"brennero": 1773670, "ftm": 1772516}
+_RAIL_RELATIONS = {"brennero": 1773670, "ftm": 1772516, "valsugana": 1772519}
 
-# Trentino Trasporti service API — the FTM (Trento–Malè) railway is route 352.
+# Trentino Trasporti service API. The FTM (Trento–Malè) and Valsugana
+# (Trento–Bassano del Grappa) railways are served by the gtlservice feed — the
+# same one the live-bus tracker uses. Each line lists its service route ids.
 _TT_BASE = "https://app-tpl.tndigit.it/gtlservice"
 _TT_AUTH = ("mittmobile", "ecGsp.RHB3")  # public credentials of the TT app
 _TT_HEADERS = {"X-Requested-With": "it.tndigit.mit", "User-Agent": "CommuteSync/1.0"}
-_FTM_ROUTE_ID = 352
+_TT_LINES: dict[str, dict] = {
+    "ftm":       {"route_ids": [352], "brand": "trentino", "prefix": "FTM"},
+    "valsugana": {"route_ids": [691, 693, 695, 696], "brand": "valsugana", "prefix": "VAL"},
+}
+# Service route id → public line label shown on trains and boards.
+_ROUTE_LABEL = {352: "R35", 691: "R25", 695: "R25", 693: "R26", 696: "R26"}
 
 _POLL_SEC = 40            # how often the background thread re-polls ViaggiaTreno
 _LIVE_FIX_MAX_SEC = 1800  # a GPS fix older than this no longer counts as "live"
@@ -80,8 +88,9 @@ _BRENNERO_STATIONS = [
     ("S02026", "Bolzano", "Bozen", 46.4964, 11.3567),
 ]
 
-# Trento–Malè–Mezzana (FTM) line — no ViaggiaTreno codes (narrow gauge, off
-# the RFI network), so synthetic ``FTM-*`` ids are used.
+# Trentino Trasporti rail lines — fallback station lists, used only if the
+# live gtlservice feed is unreachable at startup. The real, complete sets are
+# loaded from the service.
 _FTM_STATIONS = [
     ("FTM-TN", "Trento FS", "", 46.0717, 11.1194),
     ("FTM-LV", "Lavis", "", 46.1394, 11.1097),
@@ -90,6 +99,17 @@ _FTM_STATIONS = [
     ("FTM-CL", "Cles", "", 46.3661, 11.0339),
     ("FTM-ML", "Malè", "", 46.3536, 10.9136),
     ("FTM-MN", "Mezzana", "", 46.3181, 10.8047),
+]
+_VALSUGANA_STATIONS = [
+    ("VAL-TN", "Trento", "", 46.0717, 11.1194),
+    ("VAL-PE", "Pergine Valsugana", "", 46.0636, 11.2378),
+    ("VAL-LV", "Levico Terme", "", 46.0114, 11.2986),
+    ("VAL-CD", "Caldonazzo", "", 45.9939, 11.2706),
+    ("VAL-BV", "Borgo Valsugana Est", "", 46.0533, 11.4561),
+    ("VAL-ST", "Strigno", "", 46.0556, 11.5097),
+    ("VAL-GR", "Grigno", "", 46.0119, 11.6386),
+    ("VAL-PR", "Primolano", "", 45.9544, 11.6900),
+    ("VAL-BS", "Bassano del Grappa", "", 45.7666, 11.7414),
 ]
 
 # Train brands — colour, typical composition and whether it is a fast service.
@@ -102,6 +122,7 @@ BRANDS: dict[str, dict] = {
     "regionale_v":  {"label": "Regionale Veloce", "color": "#e0762a", "cars": 6, "car_m": 25, "fast": False},
     "regionale":    {"label": "Regionale",    "color": "#2f9e44", "cars": 4, "car_m": 24, "fast": False},
     "trentino":     {"label": "Trentino Trasporti", "color": "#d11f2d", "cars": 3, "car_m": 17, "fast": False},
+    "valsugana":    {"label": "Valsugana",    "color": "#1f9e8f", "cars": 2, "car_m": 24, "fast": False},
 }
 
 
@@ -232,7 +253,7 @@ def _load_rail(key: str, rel_id: int) -> list[tuple[float, float]]:
 
 
 # ---------------------------------------------------------------------------
-# Trentino Trasporti service client (FTM live data)
+# Trentino Trasporti service client (FTM + Valsugana live data)
 # ---------------------------------------------------------------------------
 
 def _tt_get(path: str, params: dict | None = None):
@@ -251,40 +272,63 @@ def _gtfs_sec(value: str) -> int:
             + (int(parts[2]) if len(parts) > 2 and parts[2] else 0))
 
 
-def _clean_ftm_headsign(raw: str | None) -> str:
-    """Trim Trentino Trasporti's 'Ftm' / 'Ferrovia' tags off a headsign."""
-    text = re.sub(r"\b(ftm|ferrovia)\b", "", raw or "", flags=re.IGNORECASE)
-    return text.strip(" .").title() or "Trentino Trasporti"
+def _clean_tt_label(raw: str | None) -> str:
+    """Trim Trentino Trasporti's station tags ('Ftm', 'Staz. Fs', …).
+
+    Used for both train headsigns and station names.
+    """
+    text = re.sub(r"(?i)\b(ftm|ferrovia|stazione|staz\.?|fs)\b", "", raw or "")
+    text = re.sub(r"\s{2,}", " ", text).strip(" .,-·")
+    return text.title() or "Trentino Trasporti"
 
 
-def _load_ftm_stations(line: RailLine) -> list[tuple]:
-    """Real FTM stations from the Trentino Trasporti service, ordered along line.
+_tt_stops_cache: dict[int, dict] = {}
 
-    Station ids are gathered from route 352's trip stop sequences; coordinates
+
+def _tt_stop_catalogue() -> dict[int, dict]:
+    """The Trentino Trasporti stop catalogue (stopId → stop), fetched once."""
+    if not _tt_stops_cache:
+        for s in _tt_get("/stops", {"size": 20000}) or []:
+            sid = s.get("stopId")
+            if sid is not None:
+                _tt_stops_cache[sid] = s
+    return _tt_stops_cache
+
+
+def _load_tt_stations(line: RailLine, route_ids: list[int], prefix: str) -> list[tuple]:
+    """Real stations of a Trentino Trasporti rail line, ordered along the track.
+
+    Station ids are gathered from each route's trip stop sequences; coordinates
     and names come from the service's stop catalogue.
     """
-    trips = _tt_get("/trips_new", {"routeId": _FTM_ROUTE_ID, "type": "E", "limit": 150})
     stop_ids: set = set()
-    for t in trips or []:
-        for st in t.get("stopTimes") or []:
-            sid = st.get("stopId")
-            if sid is not None:
-                stop_ids.add(sid)
+    for rid in route_ids:
+        try:
+            trips = _tt_get("/trips_new", {"routeId": rid, "type": "E", "limit": 150})
+        except Exception:
+            continue
+        for t in trips or []:
+            for st in t.get("stopTimes") or []:
+                sid = st.get("stopId")
+                if sid is not None:
+                    stop_ids.add(sid)
 
-    catalogue = _tt_get("/stops", {"routeId": _FTM_ROUTE_ID}) or []
-    by_id = {s.get("stopId"): s for s in catalogue}
-
+    catalogue = _tt_stop_catalogue()
     stations: list[tuple] = []
     for sid in stop_ids:
-        s = by_id.get(sid)
+        s = catalogue.get(sid)
         if not s:
             continue
         try:
             lat, lon = float(s["stopLat"]), float(s["stopLon"])
         except (KeyError, TypeError, ValueError):
             continue
-        stations.append((f"FTM-{sid}", (s.get("stopName") or "Fermata").strip(),
-                          "", lat, lon, sid))
+        # Keep only stops that actually sit on this line's track — guards
+        # against a stray off-line stop leaking in from a shared route id.
+        if min(_haversine_km((lat, lon), p) for p in line.points) > 3.0:
+            continue
+        name = _clean_tt_label(s.get("stopName")) or "Fermata"
+        stations.append((f"{prefix}-{sid}", name, "", lat, lon, sid))
     stations.sort(key=lambda st: line.project(st[3], st[4]))
     return stations
 
@@ -296,16 +340,19 @@ def _load_ftm_stations(line: RailLine) -> list[tuple]:
 _LINES: dict[str, RailLine] = {}
 _STATIONS: list[dict] = []      # ordered: every station of every line
 _STATION_BY_CODE: dict[str, dict] = {}
-_FTM_STOP_RAILPOS: dict[int, float] = {}   # TT stopId -> rail position (km)
-_FTM_OK = False                            # real FTM data loaded successfully
+_TT_STOP_RAILPOS: dict[int, float] = {}    # TT stopId -> rail position (km)
+_TT_OK: dict[str, bool] = {}               # TT line key -> real data loaded
+
+_FALLBACK_STATIONS = {
+    "brennero": _BRENNERO_STATIONS,
+    "ftm": _FTM_STATIONS,
+    "valsugana": _VALSUGANA_STATIONS,
+}
 
 
 def _build_static() -> None:
-    global _FTM_OK
-    raw: dict[str, list] = {"brennero": list(_BRENNERO_STATIONS)}
-
     for key, rel_id in _RAIL_RELATIONS.items():
-        seed = raw.get(key) or list(_FTM_STATIONS)
+        seed = _FALLBACK_STATIONS[key]
         try:
             line = RailLine(key, _load_rail(key, rel_id))
         except Exception:
@@ -314,15 +361,19 @@ def _build_static() -> None:
             line = RailLine(key, [(e[3], e[4]) for e in seed])
         _LINES[key] = line
 
-        if key == "ftm":
+        entries = list(seed)
+        cfg = _TT_LINES.get(key)
+        if cfg is not None:
             try:
-                loaded = _load_ftm_stations(line)
-                raw["ftm"] = loaded if len(loaded) >= 3 else list(_FTM_STATIONS)
-                _FTM_OK = len(loaded) >= 3
+                loaded = _load_tt_stations(line, cfg["route_ids"], cfg["prefix"])
+                if len(loaded) >= 3:
+                    entries = loaded
+                    _TT_OK[key] = True
             except Exception:
-                raw["ftm"] = list(_FTM_STATIONS)
+                pass  # keep the hardcoded fallback list
 
-        for order, entry in enumerate(raw[key]):
+        entries.sort(key=lambda e: line.project(e[3], e[4]))
+        for order, entry in enumerate(entries):
             code, name, name_de, lat, lon = entry[:5]
             stop_id = entry[5] if len(entry) > 5 else None
             station = {
@@ -333,7 +384,7 @@ def _build_static() -> None:
             _STATIONS.append(station)
             _STATION_BY_CODE[code] = station
             if stop_id is not None:
-                _FTM_STOP_RAILPOS[stop_id] = station["railpos"]
+                _TT_STOP_RAILPOS[stop_id] = station["railpos"]
 
 
 _build_static()
@@ -378,8 +429,8 @@ def _vt_departures(code: str, dt: datetime) -> list[dict]:
 
 _lock = threading.Lock()
 _vt_trips: list[dict] = []                 # tracked ViaggiaTreno trips (Brennero)
-_ftm_trips: list[dict] = []                # tracked FTM trips, ready to position
-_ftm_raw: list[dict] = []                  # raw FTM trips, kept for departure boards
+_tt_trips: dict[str, list[dict]] = {}      # TT line key -> positionable trips
+_tt_raw: dict[str, list[dict]] = {}        # TT line key -> raw trips (for boards)
 _board_cache: dict[str, tuple[float, list[dict]]] = {}  # code -> (epoch, raw)
 _VT_OK = False
 _started = False
@@ -479,16 +530,18 @@ def _poll() -> None:
     _VT_OK = True
 
 
-def _build_ftm_trip(t: dict, midnight_ms: float) -> dict | None:
-    """Turn one Trentino Trasporti FTM trip into a positionable trip.
+def _build_tt_trip(
+    t: dict, midnight_ms: float, line_key: str, brand: str,
+) -> dict | None:
+    """Turn one Trentino Trasporti rail trip into a positionable trip.
 
-    Each stop is mapped onto the FTM rail polyline; scheduled stop times are
+    Each stop is mapped onto the line's rail polyline; scheduled stop times are
     shifted by the live delay so the train rides the rails on time.
     """
     delay_min = t.get("delay") or 0
     points: list[tuple[float, float]] = []
     for st in t.get("stopTimes") or []:
-        railpos = _FTM_STOP_RAILPOS.get(st.get("stopId"))
+        railpos = _TT_STOP_RAILPOS.get(st.get("stopId"))
         if railpos is None:
             continue
         raw_time = st.get("departureTime") or st.get("arrivalTime")
@@ -506,45 +559,62 @@ def _build_ftm_trip(t: dict, midnight_ms: float) -> dict | None:
     points.sort(key=lambda p: p[1])
 
     return {
-        "id": f"ftm-{t.get('tripId')}",
-        "line": "ftm",
-        "brand": "trentino",
-        "number": "R35",
-        "headsign": _clean_ftm_headsign(t.get("tripHeadsign")),
+        "id": f"{line_key}-{t.get('tripId')}",
+        "line": line_key,
+        "brand": brand,
+        "number": _ROUTE_LABEL.get(t.get("routeId"), "R"),
+        "headsign": _clean_tt_label(t.get("tripHeadsign")),
         "delay": int(delay_min),
         "live": bool(t.get("matricolaBus") and t.get("lastEventRecivedAt")),
         "points": points,
     }
 
 
-def _poll_ftm() -> None:
-    """One refresh cycle for the FTM line — live Trentino Trasporti trips."""
-    global _ftm_trips, _ftm_raw
-    raw = _tt_get("/trips_new", {"routeId": _FTM_ROUTE_ID, "type": "E", "limit": 200})
-    if not isinstance(raw, list):
+def _poll_tt(line_key: str) -> None:
+    """One refresh cycle for a Trentino Trasporti rail line — live trips."""
+    cfg = _TT_LINES[line_key]
+    seen: dict[str, dict] = {}
+    for route_id in cfg["route_ids"]:
+        try:
+            raw = _tt_get(
+                "/trips_new", {"routeId": route_id, "type": "E", "limit": 200})
+        except Exception:
+            continue
+        for t in raw or []:
+            tid = t.get("tripId")
+            if tid and tid not in seen:
+                seen[tid] = t
+    if not seen:
         return
+
+    raw_trips = list(seen.values())
     now = datetime.now(ROME)
     midnight_ms = now.replace(
         hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000
 
     trips: list[dict] = []
-    for t in raw:
-        trip = _build_ftm_trip(t, midnight_ms)
+    for t in raw_trips:
+        trip = _build_tt_trip(t, midnight_ms, line_key, cfg["brand"])
         if trip:
             trips.append(trip)
 
     with _lock:
-        _ftm_trips = trips
-        _ftm_raw = raw
+        _tt_trips[line_key] = trips
+        _tt_raw[line_key] = raw_trips
+    _TT_OK[line_key] = True
 
 
 def _worker() -> None:
     while True:
-        for poll in (_poll, _poll_ftm):
+        try:
+            _poll()
+        except Exception:
+            pass  # keep the last good cache, retry next cycle
+        for line_key in _TT_LINES:
             try:
-                poll()
+                _poll_tt(line_key)
             except Exception:
-                pass  # keep the last good cache, retry next cycle
+                pass
         _time.sleep(_POLL_SEC)
 
 
@@ -558,7 +628,7 @@ def start() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Synthetic timetable — Italo (Brennero) and Trentino Trasporti (FTM)
+# Synthetic timetable — Brennero line only (FTM/Valsugana use live TT data)
 # ---------------------------------------------------------------------------
 
 # brand, line, headway (min), traversal (min), departures per direction.
@@ -575,10 +645,6 @@ _SYNTH_BRENNERO_FALLBACK = [
     ("regionale_v", "brennero", 95, 112, 16),
     ("eurocity", "brennero", 180, 100, 8),
 ]
-# Added only when the Trentino Trasporti feed is unreachable.
-_SYNTH_FTM_FALLBACK = [
-    ("trentino", "ftm", 35, 74, 32),
-]
 
 
 def _synthetic_trips(now_ms: float) -> list[dict]:
@@ -590,8 +656,6 @@ def _synthetic_trips(now_ms: float) -> list[dict]:
     specs = list(_SYNTH_ALWAYS)
     if not _VT_OK:
         specs += _SYNTH_BRENNERO_FALLBACK
-    if not _FTM_OK and not _ftm_trips:
-        specs += _SYNTH_FTM_FALLBACK
 
     trips: list[dict] = []
     for brand, line_key, headway, traversal, count in specs:
@@ -600,11 +664,7 @@ def _synthetic_trips(now_ms: float) -> list[dict]:
             continue
         traversal_ms = traversal * 60_000
         for direction in (1, -1):
-            head_label = (
-                {"brennero": "Bolzano", "ftm": "Mezzana"}[line_key]
-                if direction == 1
-                else {"brennero": "Verona Porta Nuova", "ftm": "Trento FS"}[line_key]
-            )
+            head_label = "Bolzano" if direction == 1 else "Verona Porta Nuova"
             for k in range(count):
                 # First service at 05:00, then one every `headway` minutes.
                 depart_ms = midnight_ms + (300 + k * headway) * 60_000
@@ -628,9 +688,9 @@ def _synthetic_trips(now_ms: float) -> list[dict]:
 
 
 def _synth_number(brand: str, k: int) -> str:
-    prefix = {"italo": "ITA", "trentino": "R", "regionale": "RE",
+    prefix = {"italo": "ITA", "regionale": "RE",
               "frecciarossa": "FR", "regionale_v": "RV", "eurocity": "EC"}
-    base = {"italo": 8900, "trentino": 200, "regionale": 5600,
+    base = {"italo": 8900, "regionale": 5600,
             "frecciarossa": 9700, "regionale_v": 2200, "eurocity": 80}
     return f"{prefix.get(brand, 'T')} {base.get(brand, 100) + k}"
 
@@ -696,7 +756,9 @@ def _carriages(
 
 def _all_trips() -> list[dict]:
     with _lock:
-        trips = list(_vt_trips) + list(_ftm_trips)
+        trips = list(_vt_trips)
+        for line_trips in _tt_trips.values():
+            trips += line_trips
     now_ms = _time.time() * 1000
     return trips + _synthetic_trips(now_ms)
 
@@ -915,14 +977,16 @@ def _brennero_board(code: str, ref: datetime, limit: int) -> list[dict]:
     return rows[:limit]
 
 
-def _ftm_board_live(station: dict, ref: datetime, limit: int) -> list[dict]:
-    """Departure board for an FTM station, from live Trentino Trasporti trips."""
+def _tt_board_live(station: dict, ref: datetime, limit: int) -> list[dict]:
+    """Departure board for an FTM / Valsugana station, from live TT trips."""
     sid = station.get("stop_id")
+    line_key = station["line"]
+    brand = _TT_LINES[line_key]["brand"]
     ref_ms = ref.timestamp() * 1000
     midnight_ms = ref.replace(
         hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000
     with _lock:
-        raw = list(_ftm_raw)
+        raw = list(_tt_raw.get(line_key, []))
 
     rows: list[dict] = []
     for t in raw:
@@ -942,11 +1006,11 @@ def _ftm_board_live(station: dict, ref: datetime, limit: int) -> list[dict]:
             if in_min < -2 or in_min > 360:
                 break
             rows.append({
-                "number": "R35",
-                "brand": "trentino",
-                "brand_label": BRANDS["trentino"]["label"],
-                "color": BRANDS["trentino"]["color"],
-                "destination": _clean_ftm_headsign(t.get("tripHeadsign")),
+                "number": _ROUTE_LABEL.get(t.get("routeId"), "R"),
+                "brand": brand,
+                "brand_label": BRANDS[brand]["label"],
+                "color": BRANDS[brand]["color"],
+                "destination": _clean_tt_label(t.get("tripHeadsign")),
                 "time": datetime.fromtimestamp(pass_ms / 1000, ROME).strftime("%H:%M"),
                 "delay": delay,
                 "platform": "1" if t.get("directionId") == 0 else "2",
@@ -954,44 +1018,6 @@ def _ftm_board_live(station: dict, ref: datetime, limit: int) -> list[dict]:
                 "in_min": in_min,
             })
             break
-    rows.sort(key=lambda r: r["in_min"])
-    return rows[:limit]
-
-
-def _ftm_board_synth(station: dict, ref: datetime, limit: int) -> list[dict]:
-    """Synthetic FTM departure board — fallback when the live feed is down."""
-    line = _LINES["ftm"]
-    ref_ms = ref.timestamp() * 1000
-    midnight_ms = ref.replace(
-        hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000
-    headway, traversal, count = 35, 74, 32
-    traversal_ms = traversal * 60_000
-
-    rows: list[dict] = []
-    for direction in (1, -1):
-        head_label = "Mezzana" if direction == 1 else "Trento FS"
-        # Fraction of the line already covered when the train reaches here.
-        frac = (station["railpos"] / line.length) if line.length else 0.0
-        if direction == -1:
-            frac = 1 - frac
-        for k in range(count):
-            depart_ms = midnight_ms + (300 + k * headway) * 60_000
-            pass_ms = depart_ms + frac * traversal_ms
-            in_min = round((pass_ms - ref_ms) / 60_000)
-            if in_min < 0 or in_min > 240:
-                continue
-            rows.append({
-                "number": _synth_number("trentino", k),
-                "brand": "trentino",
-                "brand_label": BRANDS["trentino"]["label"],
-                "color": BRANDS["trentino"]["color"],
-                "destination": head_label,
-                "time": datetime.fromtimestamp(pass_ms / 1000, ROME).strftime("%H:%M"),
-                "delay": 0,
-                "platform": "1" if direction == 1 else "2",
-                "departed": False,
-                "in_min": in_min,
-            })
     rows.sort(key=lambda r: r["in_min"])
     return rows[:limit]
 
@@ -1014,10 +1040,8 @@ def get_station_board(code: str, time: str | None = None, limit: int = 12) -> di
         departures: list[dict] = []
     elif station["line"] == "brennero":
         departures = _brennero_board(code, ref, limit)
-    elif station.get("stop_id") is not None and (_FTM_OK or _ftm_raw):
-        departures = _ftm_board_live(station, ref, limit)
     else:
-        departures = _ftm_board_synth(station, ref, limit)
+        departures = _tt_board_live(station, ref, limit)
 
     return {
         "code": code,

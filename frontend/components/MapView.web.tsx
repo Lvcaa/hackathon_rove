@@ -1064,10 +1064,12 @@ function RouteLayer({ route }: { route: RouteSuggestion }) {
 const RAIL_COLORS: Record<string, string> = {
   brennero: '#8b97b5',   // Verona–Bolzano main line
   ftm: '#d98a3a',        // Trento–Malè (Trentino Trasporti)
+  valsugana: '#1f9e8f',  // Trento–Bassano del Grappa
 };
 const RAIL_LABELS: Record<string, string> = {
   brennero: 'Linea del Brennero',
   ftm: 'Trento–Malè–Mezzana',
+  valsugana: 'Ferrovia della Valsugana',
 };
 
 // Real OSM track alignment, drawn as a faint dashed line beneath everything.

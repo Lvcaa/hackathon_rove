@@ -60,7 +60,7 @@ export interface Stats {
 
 export type TrainBrand =
   | 'frecciarossa' | 'italo' | 'eurocity' | 'intercity'
-  | 'regionale_v' | 'regionale' | 'trentino';
+  | 'regionale_v' | 'regionale' | 'trentino' | 'valsugana';
 
 export interface RailCollection {
   type: 'FeatureCollection';
