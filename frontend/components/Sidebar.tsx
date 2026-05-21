@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { View, Text, TextInput, FlatList, TouchableOpacity, StyleSheet, Animated } from 'react-native';
 import { MobilityFeature, MobilityData, CategoryKey } from '../types/mobility';
 import { Colors, CategoryColors, CategoryIcons, CategoryLabels } from '../constants/colors';
 import CategoryFilter from './CategoryFilter';
@@ -67,76 +67,129 @@ function LocationRow({ item, isSelected, onPress }: {
 
 export default function Sidebar({ data, visibleCategories, onToggleCategory, onFeatureSelect, selectedFeature }: Props) {
   const [query, setQuery] = useState('');
+  const [collapsed, setCollapsed] = useState(false);
+  const anim = useRef(new Animated.Value(0)).current;
+
+  const toggle = () => {
+    const toValue = collapsed ? 0 : 1;
+    Animated.spring(anim, { toValue, useNativeDriver: false, tension: 300, friction: 30 }).start();
+    setCollapsed((c) => !c);
+  };
+
+  const animWidth = anim.interpolate({ inputRange: [0, 1], outputRange: [260, 48] });
+
   const items = buildList(data, visibleCategories, query);
 
   return (
-    <View style={styles.sidebar}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.logo}>
-          <Text style={styles.logoText}>CS</Text>
+    <Animated.View style={[styles.sidebar, { width: animWidth }]}>
+      {collapsed ? (
+        /* ── Collapsed strip ── */
+        <View style={styles.collapsedStrip}>
+          <View style={styles.logo}>
+            <Text style={styles.logoText}>CS</Text>
+          </View>
+          <TouchableOpacity onPress={toggle} style={styles.toggleBtn} activeOpacity={0.7}>
+            <Text style={styles.toggleIcon}>›</Text>
+          </TouchableOpacity>
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.appName}>CommuteSync</Text>
-          <Text style={styles.appSub}>Mobilità urbana</Text>
-        </View>
-        <View style={styles.liveIndicator}>
-          <View style={styles.liveDot} />
-          <Text style={styles.liveText}>Live</Text>
-        </View>
-      </View>
+      ) : (
+        /* ── Expanded content ── */
+        <>
+          {/* Header */}
+          <View style={styles.header}>
+            <View style={styles.logo}>
+              <Text style={styles.logoText}>CS</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.appName}>CommuteSync</Text>
+              <Text style={styles.appSub}>Mobilità urbana</Text>
+            </View>
+            <View style={styles.liveIndicator}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveText}>Live</Text>
+            </View>
+            <TouchableOpacity onPress={toggle} style={styles.toggleBtn} activeOpacity={0.7}>
+              <Text style={styles.toggleIcon}>‹</Text>
+            </TouchableOpacity>
+          </View>
 
-      {/* Search */}
-      <View style={styles.searchWrap}>
-        <Text style={styles.searchIcon}>🔍</Text>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Cerca una fermata..."
-          placeholderTextColor={Colors.textMuted}
-          value={query}
-          onChangeText={setQuery}
-        />
-      </View>
+          {/* Search */}
+          <View style={styles.searchWrap}>
+            <Text style={styles.searchIcon}>🔍</Text>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Cerca una fermata..."
+              placeholderTextColor={Colors.textMuted}
+              value={query}
+              onChangeText={setQuery}
+            />
+          </View>
 
-      {/* Filters */}
-      <CategoryFilter visible={visibleCategories} onToggle={onToggleCategory} />
+          {/* Filters */}
+          <CategoryFilter visible={visibleCategories} onToggle={onToggleCategory} />
 
-      {/* Divider */}
-      <View style={styles.divider} />
+          {/* Divider */}
+          <View style={styles.divider} />
 
-      {/* Count label */}
-      <Text style={styles.countLabel}>{items.length} risultati</Text>
+          {/* Count label */}
+          <Text style={styles.countLabel}>{items.length} risultati</Text>
 
-      {/* List */}
-      <FlatList
-        data={items}
-        keyExtractor={(item) => item.key}
-        renderItem={({ item }) => (
-          <LocationRow
-            item={item}
-            isSelected={
-              selectedFeature?.feature === item.feature &&
-              selectedFeature?.category === item.category
-            }
-            onPress={() => onFeatureSelect(item.feature, item.category)}
+          {/* List */}
+          <FlatList
+            data={items}
+            keyExtractor={(item) => item.key}
+            renderItem={({ item }) => (
+              <LocationRow
+                item={item}
+                isSelected={
+                  selectedFeature?.feature === item.feature &&
+                  selectedFeature?.category === item.category
+                }
+                onPress={() => onFeatureSelect(item.feature, item.category)}
+              />
+            )}
+            style={styles.list}
+            showsVerticalScrollIndicator={false}
+            ItemSeparatorComponent={() => <View style={styles.separator} />}
           />
-        )}
-        style={styles.list}
-        showsVerticalScrollIndicator={false}
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
-      />
-    </View>
+        </>
+      )}
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   sidebar: {
-    width: 260,
     backgroundColor: Colors.surface,
     borderRightWidth: 1,
     borderRightColor: Colors.border,
     display: 'flex' as any,
     flexDirection: 'column',
+    overflow: 'hidden' as any,
+  },
+
+  collapsedStrip: {
+    flex: 1,
+    alignItems: 'center',
+    paddingTop: 14,
+    gap: 16,
+  },
+
+  toggleBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toggleIcon: {
+    fontSize: 18,
+    color: Colors.textMuted,
+    lineHeight: 22,
+    marginTop: -1,
   },
 
   header: {

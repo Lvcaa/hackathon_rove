@@ -17,6 +17,10 @@ function injectStyles() {
       from { opacity: 0; transform: translateY(10px) scale(0.95); }
       to   { opacity: 1; transform: translateY(0)    scale(1); }
     }
+    @keyframes cs-pane-out {
+      from { opacity: 1; transform: translateY(0)    scale(1); }
+      to   { opacity: 0; transform: translateY(10px) scale(0.95); }
+    }
     @keyframes cs-fade-in {
       from { opacity: 0; transform: translateY(8px); }
       to   { opacity: 1; transform: translateY(0); }
@@ -35,6 +39,13 @@ function injectStyles() {
       animation: cs-pane-in 0.36s cubic-bezier(0.16,1,0.3,1) both;
       transform-origin: bottom center;
     }
+    .cs-pane-out {
+      animation: cs-pane-out 0.28s cubic-bezier(0.4,0,1,1) both;
+      transform-origin: bottom center;
+      pointer-events: none;
+    }
+    .cs-clear-btn { transition: opacity 0.15s ease, transform 0.15s ease; }
+    .cs-clear-btn:hover { opacity: 1 !important; transform: scale(1.1); }
     .cs-fade-in  { animation: cs-fade-in  0.22s ease both; }
     .cs-spinner  { animation: cs-spin 0.7s linear infinite; }
 
@@ -91,37 +102,36 @@ function injectStyles() {
                   inset 0 1px 0 rgba(255,255,255,0.10) !important;
     }
     .cs-searchbar:focus-within {
-      border-color: rgba(0,229,255,0.45) !important;
-      box-shadow: 0 26px 70px rgba(0,0,0,0.75),
-                  0 0 0 3px rgba(0,229,255,0.13),
-                  inset 0 1px 0 rgba(255,255,255,0.10) !important;
+      border-color: rgba(255,255,255,0.30) !important;
+      box-shadow: 0 26px 70px rgba(0,0,0,0.7),
+                  0 0 0 3px rgba(255,255,255,0.10),
+                  inset 0 1px 0 rgba(255,255,255,0.14) !important;
     }
     /* Icon badge brightens while the field is focused */
     .cs-search-badge {
       transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
     }
     .cs-searchbar:focus-within .cs-search-badge {
-      background: rgba(0,229,255,0.26) !important;
-      border-color: rgba(0,229,255,0.6) !important;
+      background: rgba(255,255,255,0.16) !important;
+      border-color: rgba(255,255,255,0.30) !important;
       transform: scale(1.06);
     }
     .cs-search-input::placeholder { color: rgba(255,255,255,0.38); font-weight: 400; }
     /* Submit button: lift on hover, press on click */
     .cs-search-btn {
-      transition: transform 0.12s ease, box-shadow 0.16s ease, filter 0.16s ease;
+      transition: transform 0.12s ease, box-shadow 0.16s ease;
     }
     .cs-search-btn:hover {
       transform: translateY(-1px);
-      filter: brightness(1.08);
-      box-shadow: 0 6px 22px rgba(0,229,255,0.42);
+      box-shadow: 0 6px 22px rgba(255,255,255,0.22);
     }
     .cs-search-btn:active { transform: translateY(0) scale(0.96); }
-    /* Suggestion rows: cyan wash + nudge on hover */
+    /* Suggestion rows: subtle wash + nudge on hover */
     .cs-suggestion {
       transition: background 0.13s ease, padding-left 0.13s ease;
     }
     .cs-suggestion:hover {
-      background: rgba(0,229,255,0.07) !important;
+      background: rgba(255,255,255,0.06) !important;
       padding-left: 20px !important;
     }
   `;
@@ -697,6 +707,7 @@ const SUGGESTIONS = ['Stazione FS Rovereto', 'Stazione FS Trento'];
 function SearchBar({ onSearch }: { onSearch: (dest: string) => void }) {
   const [query, setQuery] = useState('');
   const [open, setOpen]   = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const submit = useCallback((dest: string) => {
     if (!dest.trim()) return;
@@ -704,6 +715,12 @@ function SearchBar({ onSearch }: { onSearch: (dest: string) => void }) {
     setOpen(false);
     onSearch(dest);
   }, [onSearch]);
+
+  const clear = useCallback(() => {
+    setQuery('');
+    setOpen(false);
+    inputRef.current?.focus();
+  }, []);
 
   const suggestions = SUGGESTIONS.filter(
     (s) => !query || s.toLowerCase().includes(query.toLowerCase()),
@@ -715,25 +732,26 @@ function SearchBar({ onSearch }: { onSearch: (dest: string) => void }) {
       <div
         className="cs-searchbar"
         style={{
-          // Frosted glass — matches the map popups and the stat panels
-          background: 'rgba(17,19,27,0.72)',
-          backdropFilter: 'blur(28px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(28px) saturate(180%)',
+          background: 'rgba(17,19,27,0.82)',
+          backdropFilter: 'blur(30px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(30px) saturate(180%)',
           borderRadius: showList ? '22px 22px 16px 16px' : 22,
           border: '1px solid rgba(255,255,255,0.12)',
-          boxShadow: '0 22px 60px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.08)',
+          boxShadow: '0 28px 80px rgba(0,0,0,0.78), inset 0 1px 0 rgba(255,255,255,0.08)',
           overflow: 'hidden',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '11px 14px' }}>
           <div className="cs-search-badge" style={{
             width: 36, height: 36, borderRadius: 12, flexShrink: 0,
-            background: C.cyan + '18', border: `1px solid ${C.cyan}33`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.cyan,
+            background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.14)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'rgba(255,255,255,0.65)',
           }}>
             <Ico.Search />
           </div>
           <input
+            ref={inputRef}
             className="cs-search-input"
             style={{
               flex: 1, background: 'transparent', border: 'none',
@@ -747,11 +765,25 @@ function SearchBar({ onSearch }: { onSearch: (dest: string) => void }) {
             onBlur={() => setTimeout(() => setOpen(false), 160)}
             onKeyDown={(e) => e.key === 'Enter' && submit(query)}
           />
+          {query.length > 0 && (
+            <button
+              className="cs-clear-btn"
+              onClick={clear}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                padding: '4px 2px', display: 'flex', alignItems: 'center',
+                color: 'rgba(255,255,255,0.40)', opacity: 0.7, flexShrink: 0,
+              }}
+              aria-label="Cancella"
+            >
+              <Ico.X />
+            </button>
+          )}
           <button
             className="cs-search-btn"
             onClick={() => submit(query)}
             style={{
-              padding: '8px 15px', background: C.cyan, color: '#000',
+              padding: '8px 15px', background: '#ffffff', color: '#000',
               border: 'none', borderRadius: 11, fontSize: 12, fontWeight: 700,
               cursor: 'pointer', fontFamily: FONT, letterSpacing: '0.01em', flexShrink: 0,
             }}
@@ -801,11 +833,13 @@ function SheetPanel({
   query,
   onBook,
   onDismiss,
+  dismissing,
 }: {
   state: ReturnType<typeof useBooking>['state'];
   query: string;
   onBook: (id: string) => void;
   onDismiss: () => void;
+  dismissing: boolean;
 }) {
   const { phase, modalities, bookingOptionId, confirmation, error } = state;
   const height    = SHEET_HEIGHT[phase] ?? '0';
@@ -822,7 +856,7 @@ function SheetPanel({
     // Full width of the shared container, so it lines up with the search bar.
     <div style={{ width: '100%' }}>
       <div
-        className="cs-pane-in"
+        className={dismissing ? 'cs-pane-out' : 'cs-pane-in'}
         style={{
           fontFamily: FONT,
           // Frosted glass — grows upward out of the search bar below it.
@@ -924,9 +958,23 @@ interface Props {
 export default function BookingSheet({ onRouteReady, searchTrigger }: Props) {
   const { state, search, book, dismiss } = useBooking();
   const [query, setQuery] = useState('');
+  const [dismissing, setDismissing] = useState(false);
   const lastNonce = useRef<number | null>(null);
+  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { injectStyles(); }, []);
+
+  const handleDismiss = useCallback(() => {
+    setDismissing(true);
+    dismissTimer.current = setTimeout(() => {
+      dismiss();
+      setDismissing(false);
+    }, 280);
+  }, [dismiss]);
+
+  useEffect(() => () => {
+    if (dismissTimer.current) clearTimeout(dismissTimer.current);
+  }, []);
 
   // Auto-trigger from map "Naviga →" click
   useEffect(() => {
@@ -961,12 +1009,13 @@ export default function BookingSheet({ onRouteReady, searchTrigger }: Props) {
       width: 'min(440px, calc(100vw - 48px))', zIndex: 1000,
       display: 'flex', flexDirection: 'column', gap: 10,
     }}>
-      {state.phase !== 'idle' && (
+      {(state.phase !== 'idle' || dismissing) && (
         <SheetPanel
           state={state}
           query={query}
           onBook={book}
-          onDismiss={dismiss}
+          onDismiss={handleDismiss}
+          dismissing={dismissing}
         />
       )}
       <SearchBar onSearch={handleSearch} />
