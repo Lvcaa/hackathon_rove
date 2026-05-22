@@ -10,7 +10,7 @@ export interface TripBookPayload {
 
 // ── Modality types (discriminated union) ─────────────────────────────────────
 
-export type ModalityType = 'train' | 'parking' | 'taxi' | 'bike_sharing';
+export type ModalityType = 'train' | 'parking' | 'taxi' | 'bike_sharing' | 'bus';
 
 interface BaseModality {
   option_id: string;
@@ -45,6 +45,15 @@ export interface TaxiModality extends BaseModality {
   plate: string;
 }
 
+export interface BusModality extends BaseModality {
+  type: 'bus';
+  route: string;
+  departure_time: string;
+  stop_name: string;
+  available_tickets: number;
+  total_tickets: number;
+}
+
 export interface BikeSharingModality extends BaseModality {
   type: 'bike_sharing';
   station_name: string;
@@ -57,6 +66,7 @@ export type ModalityOption =
   | TrainModality
   | ParkingModality
   | TaxiModality
+  | BusModality
   | BikeSharingModality;
 
 // ── Search response ───────────────────────────────────────────────────────────
@@ -117,4 +127,5 @@ export interface BookingState {
   bookingOptionId: string | null;  // which option_id is currently being committed
   confirmation: TripBookResponse | null;
   error: string | null;
+  directBookingLabel: string | null;
 }

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { View, StyleSheet } from 'react-native';
 import {
   MapContainer, TileLayer, Marker, CircleMarker, Circle,
-  Polygon, Polyline, Popup, Pane, ZoomControl, useMap,
+  Polygon, Polyline, Popup, Tooltip, Pane, ZoomControl, useMap,
 } from 'react-leaflet';
 import L from 'leaflet';
 import {
@@ -32,6 +32,7 @@ interface Props {
   recenterNonce?: number;
   onLocate?: () => void;
   activeRoute?: RouteSuggestion | null;
+  routeFocusActive?: boolean;
   onOpenRouting?: () => void;
   routingPanelOpen?: boolean;
 }
@@ -55,18 +56,22 @@ const busKindLabel = (kind: BusKind) => (kind === 'extraurban' ? 'Extraurbano' :
 // ── CSS injection ─────────────────────────────────────────────────────────────
 
 function injectStyles() {
-  if (typeof document === 'undefined' || document.getElementById('cs-leaflet-css')) return;
+  if (typeof document === 'undefined') return;
 
-  const link = document.createElement('link');
-  link.id = 'cs-leaflet-css';
-  link.rel = 'stylesheet';
-  link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-  document.head.appendChild(link);
+  if (!document.getElementById('cs-leaflet-css')) {
+    const link = document.createElement('link');
+    link.id = 'cs-leaflet-css';
+    link.rel = 'stylesheet';
+    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(link);
+  }
+
+  if (document.getElementById('cs-map-styles')) return;
 
   const style = document.createElement('style');
   style.id = 'cs-map-styles';
   style.textContent = `
-    html, body { margin:0; padding:0; }
+    html, body { margin:0; padding:0; height:100%; overflow:hidden; }
     .leaflet-container { background:#0d1117 !important; font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif; }
 
     /* Popups always sit on the very top pane, above buses and stops. */
@@ -104,21 +109,20 @@ function injectStyles() {
     }
     .leaflet-control-zoom a {
       width:44px !important; height:44px !important; line-height:44px !important;
-      background:rgba(18,18,20,0.55) !important;
-      backdrop-filter:blur(22px) saturate(180%) !important;
-      -webkit-backdrop-filter:blur(22px) saturate(180%) !important;
-      border:1px solid rgba(255,255,255,0.14) !important;
-      border-radius:16px !important;
-      box-shadow:0 8px 28px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.12) !important;
-      color:rgba(255,255,255,0.88) !important;
+      background:#ffffff !important;
+      border:1px solid rgba(0,0,0,0.12) !important;
+      border-radius:12px !important;
+      box-shadow:0 4px 12px rgba(0,0,0,0.15) !important;
+      color:#000000 !important;
       display:flex !important; align-items:center !important; justify-content:center !important;
       text-decoration:none !important;
-      transition:background 0.15s ease,border-color 0.15s ease !important;
+      transition:background 0.15s ease,border-color 0.15s ease,color 0.15s ease !important;
     }
     .leaflet-control-zoom a svg { display:block; pointer-events:none; }
     .leaflet-control-zoom a:hover {
-      background:rgba(28,30,40,0.78) !important;
-      border-color:rgba(255,255,255,0.26) !important; color:#fff !important;
+      background:#f4f4f5 !important;
+      border-color:rgba(0,0,0,0.2) !important;
+      color:#000000 !important;
     }
 
     /* Live bus pulse. The glow is a separate radial-gradient layer animated
@@ -541,6 +545,70 @@ function ParkingZones({ features, onSelect, onNavigate }: {
   );
 }
 
+// Named public parking lots — precise blue footprints drawn on top of the
+// (green) parking-zone overlay. Distinct colour so they read as real lots.
+const PARKING_LOT_COLOR = '#2f6fed';
+
+function ParkingLots({ features }: { features: MobilityFeature[] }) {
+  return (
+    <>
+      {features.map((f, i) => {
+        const positions = (f.geometry.coordinates as number[][][])[0].map(
+          (c) => [c[1], c[0]] as [number, number]
+        );
+        const p = f.properties;
+        const name = String(p.name ?? 'Parcheggio');
+        return (
+          <Polygon key={i} positions={positions}
+            pathOptions={{
+              fillColor: PARKING_LOT_COLOR, fillOpacity: 0.35,
+              color: PARKING_LOT_COLOR, weight: 2, opacity: 0.95,
+            }}>
+            <Tooltip sticky direction="top" offset={[0, -4]}>
+              <span style={{ fontWeight: 700 }}>{name}</span>
+            </Tooltip>
+            <Popup closeButton>
+              <div style={{ padding: '14px 18px 12px', minWidth: 200 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 10, paddingRight: 18 }}>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: '50%',
+                    background: PARKING_LOT_COLOR + '22', border: `1.5px solid ${PARKING_LOT_COLOR}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0,
+                  }}>🅿️</div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', lineHeight: 1.2 }}>{name}</div>
+                    <div style={{ fontSize: 11, color: PARKING_LOT_COLOR, marginTop: 2, fontWeight: 600 }}>
+                      Parcheggio pubblico
+                    </div>
+                  </div>
+                </div>
+                {p.capacity != null && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Posti</span>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 500 }}>{String(p.capacity)}</span>
+                  </div>
+                )}
+                {p.kind != null && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>Tipo</span>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 500 }}>{String(p.kind)}</span>
+                  </div>
+                )}
+                {p.fee != null && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>A pagamento</span>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 500 }}>{p.fee === 'yes' ? 'Sì' : 'No'}</span>
+                  </div>
+                )}
+              </div>
+            </Popup>
+          </Polygon>
+        );
+      })}
+    </>
+  );
+}
+
 // A single bus stop. Its GTFS departure board is fetched lazily — only when
 // the stop is clicked — so opening the map doesn't fire a request per stop.
 function BusStopMarker({ feature }: { feature: MobilityFeature }) {
@@ -578,11 +646,11 @@ function BusStopMarker({ feature }: { feature: MobilityFeature }) {
   return (
     <CircleMarker
       center={[coords[1], coords[0]]}
-      radius={7}
+      radius={4.5}
       pane="cs-bus-stops"
       pathOptions={{
         fillColor: color, fillOpacity: 0.85,
-        color, weight: 1.5, opacity: 0.9,
+        color, weight: 1, opacity: 0.9,
       }}
       eventHandlers={{
         click: () => {
@@ -611,10 +679,12 @@ function BusStopMarker({ feature }: { feature: MobilityFeature }) {
 
 // ── Bus stop clustering + viewport culling ──────────────────────────────────────
 
-const STOP_INDIVIDUAL_ZOOM = 15;  // at/above this zoom every visible stop is shown
-const CLUSTER_CELL_PX = 70;       // grid cell size (screen px) used to group stops
+const STOP_INDIVIDUAL_ZOOM = 16;  // at/above this zoom every visible stop is shown
+const CLUSTER_CELL_PX = 110;      // grid cell size (screen px) used to group stops
 const VIEWPORT_PAD = 0.3;         // render this far beyond the viewport for smooth pans
 const MAX_BUSES = 280;            // hard cap on rendered bus markers (perf ceiling)
+const BUS_INDIVIDUAL_ZOOM = 14.5; // at/above this zoom every individual bus is shown
+const BUS_CLUSTER_CELL_PX = 95;   // grid cell size (screen px) used to group buses
 
 // Re-renders its consumer whenever the map finishes moving or zooming.
 function useMapViewport() {
@@ -642,6 +712,26 @@ function clusterIcon(count: number, kind: BusKind) {
     ">${count}</div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
+  });
+}
+
+function busClusterIcon(count: number, kind: BusKind) {
+  const color = busColor(kind);
+  const h = count < 10 ? 24 : 28;
+  const w = count < 10 ? 44 : 52;
+  const r = h / 2;
+  return L.divIcon({
+    className: '',
+    html: `<div style="
+      width:${w}px;height:${h}px;border-radius:${r}px;
+      background:${color}e6;border:1.5px solid #fff;
+      box-shadow:0 3px 8px rgba(0,0,0,0.5);
+      display:flex;align-items:center;justify-content:center;
+      color:#fff;font-weight:800;font-size:11px;cursor:pointer;
+      gap:3px;
+    ">🚌${count}</div>`,
+    iconSize: [w, h],
+    iconAnchor: [w / 2, h / 2],
   });
 }
 
@@ -723,7 +813,7 @@ function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
   // polls and `.cs-bus-marker { transition: transform }` can animate position.
   const iconCache = useRef<Map<string, L.DivIcon>>(new Map());
   const map = useMap();
-  const { bounds } = useMapViewport();
+  const { bounds, zoom } = useMapViewport();
   const [routeLine, setRouteLine] = useState<RouteLine | null>(null);
   const routeReq = useRef(0);
 
@@ -740,6 +830,44 @@ function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
       .slice(0, MAX_BUSES)
       .map((e) => e.b);
   }, [vehicles, bounds]);
+
+  const { individuals, clusters } = useMemo(() => {
+    if (zoom >= BUS_INDIVIDUAL_ZOOM) {
+      return { individuals: visible, clusters: [] };
+    }
+
+    // Bucket visible buses into a fixed pixel grid at the current zoom.
+    const cells = new Map<string, BusVehicle[]>();
+    for (const b of visible) {
+      const p = map.project([b.lat, b.lon], zoom);
+      // Group by cell and kind (urban vs extraurban) so colors match
+      const key = `${b.kind}:${Math.floor(p.x / BUS_CLUSTER_CELL_PX)}:${Math.floor(p.y / BUS_CLUSTER_CELL_PX)}`;
+      const cell = cells.get(key);
+      if (cell) cell.push(b);
+      else cells.set(key, [b]);
+    }
+
+    const individuals: BusVehicle[] = [];
+    const clusters: { lat: number; lon: number; count: number; kind: BusKind }[] = [];
+    for (const group of cells.values()) {
+      if (group.length === 1) {
+        individuals.push(group[0]);
+        continue;
+      }
+      let lat = 0, lon = 0;
+      for (const b of group) {
+        lat += b.lat;
+        lon += b.lon;
+      }
+      clusters.push({
+        lat: lat / group.length,
+        lon: lon / group.length,
+        count: group.length,
+        kind: group[0].kind,
+      });
+    }
+    return { individuals, clusters };
+  }, [visible, zoom, map]);
 
   // Tapping the map background dismisses the route preview (marker clicks
   // don't bubble to the map, so switching buses never triggers this).
@@ -788,7 +916,19 @@ function LiveBusLayer({ vehicles }: { vehicles: BusVehicle[] }) {
           />
         </Pane>
       )}
-      {visible.map((bus) => {
+      {/* Bus clusters */}
+      {clusters.map((cl) => (
+        <Marker
+          key={`bus-cl-${cl.kind}-${cl.lat.toFixed(5)}:${cl.lon.toFixed(5)}`}
+          position={[cl.lat, cl.lon]}
+          icon={busClusterIcon(cl.count, cl.kind)}
+          eventHandlers={{
+            click: () => map.flyTo([cl.lat, cl.lon], Math.min(zoom + 2, BUS_INDIVIDUAL_ZOOM)),
+          }}
+        />
+      ))}
+      {/* Individual buses */}
+      {individuals.map((bus) => {
         const bucket = Math.round(bus.bearing / 15) * 15;
         const cacheKey = `${bus.id}:${bus.route}:${bus.kind}:${bus.live}:${bucket}`;
         let icon = iconCache.current.get(cacheKey);
@@ -997,8 +1137,7 @@ function FitRoute({ route }: { route: RouteSuggestion }) {
         maxZoom: 16,
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [destKey, map]);
+  }, [destKey, map, route.id]);
   return null;
 }
 
@@ -1064,10 +1203,12 @@ function RouteLayer({ route }: { route: RouteSuggestion }) {
 const RAIL_COLORS: Record<string, string> = {
   brennero: '#8b97b5',   // Verona–Bolzano main line
   ftm: '#d98a3a',        // Trento–Malè (Trentino Trasporti)
+  valsugana: '#1f9e8f',  // Trento–Bassano del Grappa
 };
 const RAIL_LABELS: Record<string, string> = {
   brennero: 'Linea del Brennero',
   ftm: 'Trento–Malè–Mezzana',
+  valsugana: 'Ferrovia della Valsugana',
 };
 
 // Real OSM track alignment, drawn as a faint dashed line beneath everything.
@@ -1092,56 +1233,64 @@ function RailLayer({ rail }: { rail: RailCollection }) {
   );
 }
 
-// Train marker height scales with the train's real length (51–280 m).
-function trainHeight(lengthM: number): number {
-  return Math.max(22, Math.min(56, Math.round(lengthM * 0.15) + 12));
-}
-
-// Top-down train icon. Front = top (North = 0°); fast services get a tapered
-// aerodynamic nose, regional/Trentino ones a blunt cab.
-function trainSvg(color: string, h: number, fast: boolean): string {
-  const vb = Math.round(h * 2);
-  const noseEnd = fast ? 17 : 9;     // y where the body reaches full width
-  const tail = vb - 7;
-  const body = fast
-    ? `M14 2 C9 2 5 ${noseEnd - 7} 5 ${noseEnd} L5 ${tail} Q5 ${vb - 2} 10 ${vb - 2} `
-      + `L18 ${vb - 2} Q23 ${vb - 2} 23 ${tail} L23 ${noseEnd} C23 ${noseEnd - 7} 19 2 14 2 Z`
-    : `M10 3 L18 3 Q23 3 23 8 L23 ${tail} Q23 ${vb - 2} 18 ${vb - 2} `
-      + `L10 ${vb - 2} Q5 ${vb - 2} 5 ${tail} L5 8 Q5 3 10 3 Z`;
-  const winY = Math.round(vb * 0.34);
-  const winH = Math.round(vb * 0.40);
-  const windshield = fast
-    ? `<path d="M14 ${noseEnd - 1} C10 ${noseEnd - 1} 8 ${noseEnd + 5} 8 ${noseEnd + 8} `
-      + `L20 ${noseEnd + 8} C20 ${noseEnd + 5} 18 ${noseEnd - 1} 14 ${noseEnd - 1} Z" `
-      + `fill="rgba(255,255,255,0.34)"/>`
-    : `<rect x="8.5" y="6" width="11" height="7" rx="3" fill="rgba(255,255,255,0.30)"/>`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="${h}" viewBox="0 0 28 ${vb}" fill="none">
-    <path d="${body}" fill="${color}" stroke="rgba(255,255,255,0.22)" stroke-width="0.8"/>
-    ${windshield}
-    <rect x="6" y="${winY}" width="3.4" height="${winH}" rx="1.7" fill="rgba(255,255,255,0.22)"/>
-    <rect x="18.6" y="${winY}" width="3.4" height="${winH}" rx="1.7" fill="rgba(255,255,255,0.22)"/>
-    <rect x="9" y="${Math.round(vb / 2 - 1)}" width="10" height="2.4" rx="1.2" fill="rgba(0,0,0,0.28)"/>
-    <rect x="9" y="${vb - 6}" width="10" height="2.6" rx="1.3" fill="rgba(255,170,40,0.55)"/>
+// One carriage of a train, top-down. Front = top (North = 0°). The leading
+// carriage is drawn as a locomotive — a cab windscreen, plus a tapered
+// aerodynamic nose for high-speed services; the rest are plain coaches.
+function carriageSvg(color: string, len: number, w: number, locoFast: boolean, isLoco: boolean): string {
+  const vw = Math.max(8, Math.round(w * 2));
+  const vl = Math.max(10, Math.round(len * 2));
+  const rx = Math.min(5, vw / 3);
+  const ins = 1.6;
+  let body: string;
+  if (locoFast) {
+    const nose = Math.min(vl * 0.42, vw * 1.1);
+    body = `M${vw / 2} ${ins} `
+      + `C${vw * 0.2} ${ins} ${ins} ${nose * 0.5} ${ins} ${nose} `
+      + `L${ins} ${vl - rx} Q${ins} ${vl - ins} ${ins + rx} ${vl - ins} `
+      + `L${vw - ins - rx} ${vl - ins} Q${vw - ins} ${vl - ins} ${vw - ins} ${vl - rx} `
+      + `L${vw - ins} ${nose} C${vw - ins} ${nose * 0.5} ${vw * 0.8} ${ins} ${vw / 2} ${ins} Z`;
+  } else {
+    body = `M${ins + rx} ${ins} L${vw - ins - rx} ${ins} `
+      + `Q${vw - ins} ${ins} ${vw - ins} ${ins + rx} L${vw - ins} ${vl - rx} `
+      + `Q${vw - ins} ${vl - ins} ${vw - ins - rx} ${vl - ins} L${ins + rx} ${vl - ins} `
+      + `Q${ins} ${vl - ins} ${ins} ${vl - rx} L${ins} ${ins + rx} Q${ins} ${ins} ${ins + rx} ${ins} Z`;
+  }
+  const winW = Math.max(1.3, vw * 0.16);
+  const winY = locoFast ? vl * 0.42 : vl * 0.2;
+  const winH = locoFast ? vl * 0.4 : vl * 0.6;
+  const windows = `
+    <rect x="${ins + 0.7}" y="${winY}" width="${winW}" height="${winH}" rx="${winW / 2}" fill="rgba(255,255,255,0.24)"/>
+    <rect x="${vw - ins - 0.7 - winW}" y="${winY}" width="${winW}" height="${winH}" rx="${winW / 2}" fill="rgba(255,255,255,0.24)"/>`;
+  const windshield = isLoco
+    ? `<rect x="${vw * 0.27}" y="${locoFast ? vl * 0.18 : ins + 1.2}" width="${vw * 0.46}" height="${Math.max(2.4, vw * 0.42)}" rx="2" fill="rgba(255,255,255,0.36)"/>`
+    : '';
+  // Dark seams at the coach ends so adjacent carriages read as separate units.
+  const seam = `<rect x="${ins}" y="${vl - 2.2}" width="${vw - ins * 2}" height="1.5" rx="0.7" fill="rgba(0,0,0,0.34)"/>`
+    + (isLoco ? '' : `<rect x="${ins}" y="0.7" width="${vw - ins * 2}" height="1.5" rx="0.7" fill="rgba(0,0,0,0.34)"/>`);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(w)}" height="${Math.round(len)}" viewBox="0 0 ${vw} ${vl}" fill="none">
+    <path d="${body}" fill="${color}" stroke="rgba(255,255,255,0.3)" stroke-width="0.7"/>
+    ${windows}${windshield}${seam}
   </svg>`;
 }
 
-function createTrainIcon(train: TrainVehicle, bearing: number) {
-  const h = trainHeight(train.lengthM);
-  const size = Math.max(h, 38);   // square wrap keeps rotation centred + fits glow
-  const glow = train.live
+function createCarriageIcon(train: TrainVehicle, isLoco: boolean, lenPx: number, bearing: number): L.DivIcon {
+  const len = Math.round(lenPx);
+  const w = Math.max(5, Math.min(20, Math.round(lenPx * 0.46)));
+  const glow = isLoco && train.live
     ? `<div class="cs-train-glow" style="background:radial-gradient(closest-side, ${train.color}cc, ${train.color}00);"></div>`
     : '';
+  const size = Math.max(len, w) + (isLoco && train.live ? 20 : 4);
   return L.divIcon({
     className: 'cs-train-marker',
     html: `<div class="cs-train-wrap${train.live ? '' : ' ghost'}" style="width:${size}px;height:${size}px;">
       ${glow}
       <div class="cs-train-rot" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(${bearing}deg);">
-        ${trainSvg(train.color, h, train.fast)}
+        ${carriageSvg(train.color, len, w, isLoco && train.fast, isLoco)}
       </div>
     </div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
-    popupAnchor: [0, -(h / 2) - 4],
+    popupAnchor: [0, -(len / 2) - 4],
   });
 }
 
@@ -1383,10 +1532,12 @@ function TrainVehiclePopup({ train }: { train: TrainVehicle }) {
   );
 }
 
-// Live trains — viewport-culled, icons cached so the CSS glide survives polls.
+// Live trains — each rendered as a chain of carriage markers laid along the
+// track. Carriage length is sized from the current zoom so the coaches stay
+// coupled, and icons are cached so the CSS glide survives the 4 s polls.
 function LiveTrainLayer({ trains }: { trains: TrainVehicle[] }) {
   const iconCache = useRef<Map<string, L.DivIcon>>(new Map());
-  const { bounds } = useMapViewport();
+  const { bounds, zoom } = useMapViewport();
 
   const visible = useMemo(() => {
     const padded = bounds.pad(VIEWPORT_PAD);
@@ -1395,21 +1546,34 @@ function LiveTrainLayer({ trains }: { trains: TrainVehicle[] }) {
 
   return (
     <Pane name="cs-trains" style={{ zIndex: 606 }}>
-      {visible.map((train) => {
-        const bucket = Math.round(train.bearing / 15) * 15;
-        const key = `${train.id}:${train.brand}:${train.live}:${train.lengthM}:${bucket}`;
-        let icon = iconCache.current.get(key);
-        if (!icon) {
-          icon = createTrainIcon(train, bucket);
-          iconCache.current.set(key, icon);
-        }
-        return (
-          <Marker key={train.id} position={[train.lat, train.lon]} icon={icon} pane="cs-trains">
-            <Popup closeButton>
-              <TrainVehiclePopup train={train} />
-            </Popup>
-          </Marker>
-        );
+      {visible.flatMap((train) => {
+        // Real carriage length → on-screen pixels at the current zoom.
+        const mPerPx = (156543.03 * Math.cos(train.lat * Math.PI / 180)) / 2 ** zoom;
+        const carM = train.lengthM / Math.max(train.cars, 1);
+        const lenPx = Math.max(8, Math.min(70, carM / mPerPx));
+        const lenBucket = Math.round(lenPx);
+        return train.carriages.map((car, idx) => {
+          const isLoco = idx === 0;
+          const bucket = Math.round(car.bearing / 12) * 12;
+          const key = `${train.id}:${idx}:${isLoco}:${train.live}:${lenBucket}:${bucket}`;
+          let icon = iconCache.current.get(key);
+          if (!icon) {
+            icon = createCarriageIcon(train, isLoco, lenPx, bucket);
+            iconCache.current.set(key, icon);
+          }
+          return (
+            <Marker
+              key={`${train.id}-c${idx}`}
+              position={[car.lat, car.lon]}
+              icon={icon}
+              pane="cs-trains"
+            >
+              <Popup closeButton>
+                <TrainVehiclePopup train={train} />
+              </Popup>
+            </Marker>
+          );
+        });
       })}
     </Pane>
   );
@@ -1417,13 +1581,26 @@ function LiveTrainLayer({ trains }: { trains: TrainVehicle[] }) {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
+function MapResizer() {
+  const map = useMap();
+  useEffect(() => {
+    map.invalidateSize();
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [map]);
+  return null;
+}
+
 export default function MapView({
   data, busStops, busVehicles, trainStations, rail, trainVehicles,
   visibleCategories, selectedFeature,
   onFeatureSelect, onNavigate,
   userLocation, locationStatus = 'idle', recenterNonce = 0, onLocate,
-  activeRoute, onOpenRouting, routingPanelOpen = false,
+  activeRoute, routeFocusActive = false, onOpenRouting, routingPanelOpen = false,
 }: Props) {
+  const showMapIcons = !(routeFocusActive && activeRoute);
   const showUrbanStops = visibleCategories.has('busstops_urban');
   const showExtraStops = visibleCategories.has('busstops_extraurban');
   const showTrainStations = visibleCategories.has('trainstations');
@@ -1442,6 +1619,7 @@ export default function MapView({
   return (
     <View style={styles.container}>
       <MapContainer center={CENTER} zoom={14} style={{ width: '100%', height: '100%' }} zoomControl={false}>
+        <MapResizer />
         <StylesInjector />
         <TileLayer url={TILE_URL} attribution={TILE_ATTR} />
         <ZoomControl
@@ -1450,35 +1628,38 @@ export default function MapView({
           zoomOutText='<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
         />
 
-        {visibleCategories.has('stations') && (
+        {showMapIcons && visibleCategories.has('stations') && (
           <PointMarkers features={data.stations.features} category="stations" onSelect={onFeatureSelect} onNavigate={onNavigate} />
         )}
-        {visibleCategories.has('taxi') && (
+        {showMapIcons && visibleCategories.has('taxi') && (
           <PointMarkers features={data.taxi.features} category="taxi" onSelect={onFeatureSelect} onNavigate={onNavigate} />
         )}
-        {visibleCategories.has('carsharing') && (
+        {showMapIcons && visibleCategories.has('carsharing') && (
           <PointMarkers features={data.carsharing.features} category="carsharing" onSelect={onFeatureSelect} onNavigate={onNavigate} />
         )}
-        {visibleCategories.has('parking') && (
+        {showMapIcons && visibleCategories.has('parking') && (
           <ParkingZones features={data.parking.features} onSelect={onFeatureSelect} onNavigate={onNavigate} />
+        )}
+        {visibleCategories.has('parking') && (
+          <ParkingLots features={data.parkingLots.features} />
         )}
         {/* Bus stops live in their own pane above the overlay-pane (z 400) so
             the translucent parking polygons can't intercept stop clicks. */}
-        {(showUrbanStops || showExtraStops) && (
+        {showMapIcons && (showUrbanStops || showExtraStops) && (
           <Pane name="cs-bus-stops" style={{ zIndex: 550 }}>
             {showUrbanStops && <BusStopsLayer features={urbanStops} kind="urban" />}
             {showExtraStops && <BusStopsLayer features={extraStops} kind="extraurban" />}
           </Pane>
         )}
-        {visibleCategories.has('buses') && (
+        {showMapIcons && visibleCategories.has('buses') && (
           <LiveBusLayer vehicles={busVehicles} />
         )}
         {/* Railway track sits beneath the markers; shown with either rail layer. */}
-        {(showTrainStations || showTrains) && <RailLayer rail={rail} />}
-        {showTrainStations && (
+        {showMapIcons && (showTrainStations || showTrains) && <RailLayer rail={rail} />}
+        {showMapIcons && showTrainStations && (
           <TrainStationsLayer features={trainStations.features} />
         )}
-        {showTrains && (
+        {showMapIcons && showTrains && (
           <LiveTrainLayer trains={trainVehicles} />
         )}
         {userLocation && (
@@ -1487,7 +1668,6 @@ export default function MapView({
         {activeRoute && <RouteLayer route={activeRoute} />}
       </MapContainer>
       {onLocate && <LocateButton status={locationStatus} onPress={onLocate} />}
-      {onOpenRouting && !routingPanelOpen && <RouteButton onPress={onOpenRouting} />}
     </View>
   );
 }

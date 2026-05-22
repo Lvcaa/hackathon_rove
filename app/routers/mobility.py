@@ -193,11 +193,23 @@ def _load_parking() -> dict:
     return _feature_collection(features)
 
 
+def _load_parking_lots() -> dict:
+    """Named public parking lots (Polygon features) — already WGS84 GeoJSON."""
+    import json
+
+    path = DATASET_DIR / "parking_lots.geojson"
+    if not path.exists():
+        return _feature_collection([])
+    with path.open(encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 # Module-level caches — populated once on first import
 _STATIONS: dict = _load_stations()
 _TAXI: dict = _load_taxi()
 _CARSHARING: dict = _load_carsharing()
 _PARKING: dict = _load_parking()
+_PARKING_LOTS: dict = _load_parking_lots()
 
 # ---------------------------------------------------------------------------
 # Router
@@ -228,6 +240,12 @@ def get_carsharing() -> dict:
 def get_parking() -> dict:
     """GeoJSON FeatureCollection of parking zones (Polygon features)."""
     return _PARKING
+
+
+@router.get("/api/parkinglots")
+def get_parking_lots() -> dict:
+    """GeoJSON FeatureCollection of named public parking lots (Polygon features)."""
+    return _PARKING_LOTS
 
 
 @router.get("/api/stats")

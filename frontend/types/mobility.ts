@@ -28,6 +28,7 @@ export interface MobilityData {
   taxi: MobilityCollection;
   carsharing: MobilityCollection;
   parking: MobilityCollection;
+  parkingLots: MobilityCollection;
 }
 
 export type BusKind = 'urban' | 'extraurban';
@@ -60,7 +61,7 @@ export interface Stats {
 
 export type TrainBrand =
   | 'frecciarossa' | 'italo' | 'eurocity' | 'intercity'
-  | 'regionale_v' | 'regionale' | 'trentino';
+  | 'regionale_v' | 'regionale' | 'trentino' | 'valsugana';
 
 export interface RailCollection {
   type: 'FeatureCollection';
@@ -71,11 +72,18 @@ export interface RailCollection {
   }[];
 }
 
+export interface TrainCarriage {
+  lat: number;
+  lon: number;
+  bearing: number;
+}
+
 export interface TrainVehicle {
   id: string;
   lat: number;
   lon: number;
   bearing: number;
+  carriages: TrainCarriage[];   // per-carriage positions along the track
   brand: TrainBrand;
   brandLabel: string;
   color: string;       // hex with '#'

@@ -10,7 +10,6 @@ import MapView from '../components/MapView';
 import BottomSheet from '../components/BottomSheet';
 import LayerTogglePanel from '../components/LayerTogglePanel';
 import BookingSheet from '../components/BookingSheet';
-import RoutingPanel from '../components/RoutingPanel';
 import UserAvatarButton from '../components/UserAvatarButton';
 
 // Origin/destination point a routing request resolves to.
@@ -45,14 +44,13 @@ export default function MapScreen() {
 
   const [visibleCategories, setVisibleCategories] = useState<Set<CategoryKey>>(new Set(ALL));
   const [recenterNonce, setRecenterNonce] = useState(0);
-  const [routingOpen, setRoutingOpen] = useState(false);
-  const [routeTarget, setRouteTarget] = useState<RouteTarget | null>(null);
-  const [activeRoute, setActiveRoute] = useState<RouteSuggestion | null>(null);
   const [selectedFeature, setSelectedFeature] = useState<{
     feature: MobilityFeature;
     category: CategoryKey;
   } | null>(null);
   const [bookingTrigger, setBookingTrigger] = useState<{ destination: string; nonce: number } | null>(null);
+  const [activeRoute, setActiveRoute] = useState<RouteSuggestion | null>(null);
+  const [routeFocusActive, setRouteFocusActive] = useState(false);
 
   // Build flat suggestion list for the SearchBar autocomplete from all mobility features
   const suggestions = useMemo<SuggestionItem[]>(() => {
@@ -71,7 +69,6 @@ export default function MapScreen() {
     pushFrom('taxi',       data.taxi.features);
     pushFrom('carsharing', data.carsharing.features);
     pushFrom('parking',    data.parking.features);
-    // De-duplicate by name (case-insensitive), keeping first occurrence
     const seen = new Set<string>();
     return out.filter((s) => {
       const k = s.name.toLowerCase();
@@ -93,37 +90,22 @@ export default function MapScreen() {
     setSelectedFeature({ feature, category });
   }, []);
 
-  // "Naviga →" on a map feature opens the routing panel for that destination,
-  // routing from the user's live position. Kick off geolocation if it's idle.
   const handleNavigate = useCallback((feature: MobilityFeature, category: CategoryKey) => {
     const p    = feature.properties;
     const name = String(p.descrizione || p.zona || p.nome || p.name || p.via || category);
-    setRouteTarget({ name, ...featureCoords(feature) });
-    setActiveRoute(null);
-    setRoutingOpen(true);
+    setRouteFocusActive(false);
+    setBookingTrigger((prev) => ({ destination: name, nonce: (prev?.nonce ?? 0) + 1 }));
+  }, []);
+
+  const handleRoutePreview = useCallback((route: RouteSuggestion | null) => {
+    setActiveRoute(route);
+    if (!route) setRouteFocusActive(false);
+  }, []);
+
+  const handleAIRequestLocation = useCallback(() => {
     if (locationStatus === 'idle' || locationStatus === 'error') startLocating();
   }, [locationStatus, startLocating]);
 
-  const handleOpenRouting = useCallback(() => {
-    setRoutingOpen(true);
-    if (locationStatus === 'idle' || locationStatus === 'error') startLocating();
-  }, [locationStatus, startLocating]);
-
-  const handleCloseRouting = useCallback(() => {
-    setRoutingOpen(false);
-    setRouteTarget(null);
-    setActiveRoute(null);
-  }, []);
-
-  // Hand the chosen itinerary's destination off to the booking flow.
-  const handleBookFromRoute = useCallback((destinationName: string) => {
-    setBookingTrigger((prev) => ({ destination: destinationName, nonce: (prev?.nonce ?? 0) + 1 }));
-    setRoutingOpen(false);
-    setRouteTarget(null);
-    setActiveRoute(null);
-  }, []);
-
-  // Locate button: start tracking on first press, otherwise re-centre the map.
   const handleLocate = useCallback(() => {
     if (locationStatus === 'tracking') {
       setRecenterNonce((n) => n + 1);
@@ -151,8 +133,7 @@ export default function MapScreen() {
           recenterNonce={recenterNonce}
           onLocate={handleLocate}
           activeRoute={activeRoute}
-          onOpenRouting={handleOpenRouting}
-          routingPanelOpen={routingOpen}
+          routeFocusActive={routeFocusActive}
         />
         <LayerTogglePanel
           visible={visibleCategories}
@@ -167,19 +148,14 @@ export default function MapScreen() {
             onFeatureSelect={handleFeatureSelect}
           />
         )}
-        {routingOpen && (
-          <RoutingPanel
-            origin={location}
-            locationStatus={locationStatus}
-            target={routeTarget}
-            onTargetChange={setRouteTarget}
-            onEnableLocation={startLocating}
-            onClose={handleCloseRouting}
-            onRouteSelect={setActiveRoute}
-            onBook={handleBookFromRoute}
-          />
-        )}
-        <BookingSheet searchTrigger={bookingTrigger} suggestions={suggestions} />
+        <BookingSheet
+          searchTrigger={bookingTrigger}
+          suggestions={suggestions}
+          aiOrigin={location}
+          onRoutePreview={handleRoutePreview}
+          onRouteFocusChange={setRouteFocusActive}
+          onAIRequestLocation={handleAIRequestLocation}
+        />
         <UserAvatarButton />
       </View>
     </View>
@@ -187,6 +163,6 @@ export default function MapScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, flexDirection: 'row', backgroundColor: Colors.bg },
-  mapWrapper: { flex: 1, position: 'relative' },
+  container: { flex: 1, flexDirection: 'row', backgroundColor: Colors.bg, height: '100%' },
+  mapWrapper: { flex: 1, position: 'relative', height: '100%' },
 });

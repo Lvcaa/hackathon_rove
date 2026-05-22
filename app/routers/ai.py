@@ -1,9 +1,21 @@
 """
-AI Natural Language Trip Planner.
+AI Trip Planner — natural language → a multimodal plan drawn on the map.
 
-POST /api/ai/plan — accepts a plain-language Italian prompt, calls Gemma via
-LM Studio REST API v1 (/api/v1/chat) to extract intent, then runs search +
-auto-select + book internally and returns a boarding pass.
+POST /api/ai/plan
+    body: {"prompt": str, "origin": {"lat": float, "lng": float} | null}
+
+The feature runs in three phases:
+
+  Phase 1 — LM Studio (Gemma) reads the user's free-text message and extracts a
+            structured intent: is this an urban trip in Trento/Rovereto, where
+            to, and which transport mode is preferred.
+  Phase 2 — the backend resolves the named destination against the city's
+            mobility catalogue and builds ranked multimodal itineraries with
+            the routing engine.
+  Phase 3 — the frontend draws the chosen itinerary on the Leaflet map.
+
+When a request can't be fulfilled the response is HTTP 422 carrying a
+`capabilities` block so the UI can tell the user what the planner *can* do.
 """
 
 from __future__ import annotations
@@ -15,29 +27,166 @@ from typing import Any
 import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from rapidfuzz import fuzz, process, utils
 
-from app.routers.trips import _run_book_logic, _run_search_logic
+from app.geo import haversine_m
+from app.routers import routing
+from app.routers.routing import LatLng
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
-_LM_STUDIO_BASE = os.getenv("LM_STUDIO_URL", "http://localhost:1234")
-_LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "gemma-4-26b-a4b-it-mlx")
+# ---------------------------------------------------------------------------
+# LM Studio — local Gemma model, REST API v1 (/api/v1/chat)
+# ---------------------------------------------------------------------------
+
+# The backend runs in Docker, so the default reaches LM Studio on the host
+# machine via the Docker bridge. Override with LM_STUDIO_URL when running the
+# API outside a container (then http://localhost:1234 is correct).
+_LM_STUDIO_BASE = os.getenv("LM_STUDIO_URL", "http://host.docker.internal:1234").rstrip("/")
+_LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "google/gemma-4-26b-a4b")
+_LM_STUDIO_TIMEOUT = float(os.getenv("LM_STUDIO_TIMEOUT", "60"))
+
+# Trento city centre — fallback origin when the client sends no GPS fix.
+_DEFAULT_ORIGIN = {"lat": 46.0716, "lng": 11.1185}
+
+# What the planner can actually do — surfaced verbatim in every error so the
+# user always gets a constructive answer instead of a dead end.
+_CAPABILITIES: dict[str, Any] = {
+    "summary": "Sono il pianificatore di CommuteSync: organizzo spostamenti urbani a Trento e Rovereto.",
+    "can_do": [
+        "Trovare un percorso dalla tua posizione a fermate, stazioni, parcheggi, "
+        "posteggi taxi e punti di car sharing",
+        "Confrontare le modalità: a piedi, bus urbano, treno regionale, "
+        "auto + parcheggio, car sharing, taxi",
+        "Disegnare sulla mappa l'itinerario scelto con tempi e costi stimati",
+    ],
+    "examples": [
+        "Portami alla stazione di Trento in autobus",
+        "Voglio andare a Rovereto in treno",
+        "Come arrivo al MART a piedi",
+        "Taxi per l'ospedale Santa Chiara",
+    ],
+}
+
+# Curated landmarks — high-traffic destinations the bus-stop catalogue names
+# poorly (train stations, museums, main squares). Checked before the fuzzy
+# catalogue so natural phrasings like "stazione di Trento" resolve correctly.
+_LANDMARKS: list[dict[str, Any]] = [
+    {
+        "name": "Stazione FS Trento", "lat": 46.0716, "lng": 11.1185, "category": "station",
+        "aliases": [
+            "stazione di trento", "stazione fs trento", "stazione trento",
+            "stazione ferroviaria trento", "trento stazione", "stazione centrale trento",
+        ],
+    },
+    {
+        "name": "Stazione FS Rovereto", "lat": 45.8906, "lng": 11.0407, "category": "station",
+        "aliases": [
+            "stazione di rovereto", "stazione fs rovereto", "stazione rovereto",
+            "stazione ferroviaria rovereto", "rovereto stazione",
+        ],
+    },
+    {
+        "name": "MART Rovereto", "lat": 45.8990, "lng": 11.0428, "category": "poi",
+        "aliases": ["mart", "mart rovereto", "museo mart", "museo arte moderna rovereto"],
+    },
+    {
+        "name": "Piazza Duomo, Trento", "lat": 46.0664, "lng": 11.1211, "category": "poi",
+        "aliases": [
+            "piazza duomo", "piazza duomo trento", "piazza del duomo trento",
+            "duomo di trento", "centro di trento", "centro trento",
+        ],
+    },
+    {
+        "name": "Ospedale Santa Chiara, Trento", "lat": 46.0539, "lng": 11.1277,
+        "category": "poi",
+        "aliases": [
+            "ospedale santa chiara", "ospedale santa chiara trento",
+            "ospedale s chiara", "osp santa chiara", "santa chiara",
+            "ospedale di trento", "pronto soccorso trento",
+        ],
+    },
+]
+
+# Flattened (alias, landmark) pairs for fuzzy lookup.
+_LANDMARK_ALIASES: list[tuple[str, dict[str, Any]]] = [
+    (alias, lm) for lm in _LANDMARKS for alias in lm["aliases"]
+]
+
+# LLM mode hint → suggestion id. "transit"/"park"/etc. come from
+# routing._build_suggestions; "train" is the itinerary this module appends.
+_MODE_TO_SUGGESTION = {
+    "walk":     "walk",
+    "bus":      "transit",
+    "train":    "train",
+    "drive":    "park",
+    "carshare": "carshare",
+    "taxi":     "taxi",
+}
 
 _SYSTEM_PROMPT = (
-    "You are a trip planning assistant for CommuteSync, a mobility app in Trento/Rovereto, Italy. "
-    "Extract the trip intent from the user's message and return ONLY a JSON object with these exact fields:\n"
-    '  "destination": the place name in Italian (string)\n'
-    '  "modality_hint": one of "train", "parking", "taxi", "bike_sharing", or "any" (string)\n'
-    '  "time_hint": time in HH:MM format if mentioned, otherwise null\n'
-    "Return ONLY the JSON object — no explanation, no markdown, no extra text.\n"
-    'Example: {"destination": "MART Rovereto", "modality_hint": "train", "time_hint": "18:00"}'
+    "You are the intent parser for CommuteSync, a mobility planner for the cities "
+    "of Trento and Rovereto, Italy, and the railway corridor between them. The app "
+    "plans a trip from the user's current location to a destination, choosing "
+    "between walking, the urban bus, the regional train, driving + parking, car "
+    "sharing and taxi.\n\n"
+    "Read the user's message and reply with ONLY a JSON object — no markdown, no "
+    "commentary, no extra text:\n"
+    "{\n"
+    '  "in_scope": boolean,        // true ONLY if this is a request to travel '
+    "somewhere within Trento, Rovereto or along the rail corridor\n"
+    '  "destination": string|null, // the place to reach, as a short place name; '
+    "null if none is named\n"
+    '  "mode": "walk"|"bus"|"train"|"drive"|"carshare"|"taxi"|"any",  // preferred '
+    'transport; "any" if unspecified\n'
+    '  "restated": string          // ONE short sentence in Italian: restate the '
+    "request, OR explain why it is out of scope\n"
+    "}\n\n"
+    "Rules:\n"
+    "- in_scope is false for anything that is not about going somewhere (weather, "
+    "jokes, flight/hotel bookings) or for trips outside the modelled area.\n"
+    '- Use "train" when the user mentions the train (treno) or for trips between '
+    "towns on the railway (Rovereto, Trento, Ala, Calliano, Mezzocorona, Bolzano).\n"
+    "- Never invent a destination. If the user names no place, destination is null "
+    "and in_scope is false.\n"
+    "- Output the JSON object and nothing else.\n\n"
+    "Examples:\n"
+    'User: "Portami alla stazione di Trento in autobus"\n'
+    '{"in_scope": true, "destination": "Stazione di Trento", "mode": "bus", '
+    '"restated": "Percorso in autobus verso la stazione di Trento."}\n'
+    'User: "voglio andare a Rovereto in treno"\n'
+    '{"in_scope": true, "destination": "Stazione di Rovereto", "mode": "train", '
+    '"restated": "Percorso in treno verso Rovereto."}\n'
+    'User: "che tempo fa domani?"\n'
+    '{"in_scope": false, "destination": null, "mode": "any", '
+    '"restated": "Posso pianificare spostamenti urbani, non dare previsioni meteo."}\n'
+    'User: "voglio volare a Parigi"\n'
+    '{"in_scope": false, "destination": null, "mode": "any", '
+    '"restated": "Pianifico solo spostamenti dentro Trento e Rovereto."}'
 )
 
-_MODALITY_PRIORITY = ["train", "taxi", "parking", "bike_sharing"]
+
+# ---------------------------------------------------------------------------
+# Request model
+# ---------------------------------------------------------------------------
 
 
 class AIPlanRequest(BaseModel):
     prompt: str
+    origin: LatLng | None = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 — LM Studio intent extraction
+# ---------------------------------------------------------------------------
+
+
+def _err(status: int, message: str, **extra: Any) -> HTTPException:
+    """An HTTPException whose detail always carries the capabilities block."""
+    return HTTPException(
+        status_code=status,
+        detail={"message": message, "capabilities": _CAPABILITIES, **extra},
+    )
 
 
 def _strip_markdown(text: str) -> str:
@@ -50,15 +199,57 @@ def _strip_markdown(text: str) -> str:
     return text.strip()
 
 
+def _first_json_object(text: str) -> str:
+    """Slice out the first {...} block — Gemma sometimes wraps it in prose."""
+    start = text.find("{")
+    if start == -1:
+        return text
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return text[start:]
+
+
 def _extract_text(data: dict[str, Any]) -> str:
-    """Pull the assistant text out of LM Studio REST API v1 response."""
-    choices = data.get("choices", [])
+    """Pull the assistant text out of an LM Studio REST API v1 response.
+
+    The v1 /api/v1/chat endpoint replies with an `output` array of typed items
+    — a "reasoning" block followed by the actual "message". Older / OpenAI-style
+    shapes (`choices`, plain `content`) are handled as a fallback.
+    """
+    out = data.get("output")
+    if isinstance(out, list):
+        fallback = ""
+        for item in out:
+            if not isinstance(item, dict) or not item.get("content"):
+                continue
+            if item.get("type") == "message":
+                return str(item["content"])
+            if item.get("type") != "reasoning":
+                fallback = str(item["content"])
+        return fallback
+
+    choices = data.get("choices")
     if choices:
-        return choices[0].get("message", {}).get("content", "") or ""
-    return data.get("content", "") or ""
+        msg = choices[0].get("message", {})
+        if msg.get("content"):
+            return str(msg["content"])
+        if choices[0].get("text"):
+            return str(choices[0]["text"])
+
+    for key in ("content", "output", "response", "text"):
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
 
 
-def _call_lm_studio(system_prompt: str, user_input: str, timeout: float = 30.0) -> str:
+def _call_lm_studio(system_prompt: str, user_input: str) -> str:
     url = f"{_LM_STUDIO_BASE}/api/v1/chat"
     try:
         resp = requests.post(
@@ -68,87 +259,208 @@ def _call_lm_studio(system_prompt: str, user_input: str, timeout: float = 30.0) 
                 "system_prompt": system_prompt,
                 "input": user_input,
             },
-            timeout=timeout,
+            timeout=_LM_STUDIO_TIMEOUT,
         )
         resp.raise_for_status()
         return _extract_text(resp.json())
     except requests.ConnectionError as exc:
-        raise HTTPException(status_code=503, detail="AI planner unavailable: LM Studio not reachable") from exc
+        raise _err(
+            503,
+            "Il pianificatore AI non è raggiungibile: avvia LM Studio e carica "
+            f"il modello {_LM_STUDIO_MODEL}.",
+        ) from exc
+    except requests.Timeout as exc:
+        raise _err(503, "Il pianificatore AI ha impiegato troppo tempo a rispondere.") from exc
     except requests.HTTPError as exc:
-        raise HTTPException(status_code=503, detail=f"AI planner error: {exc.response.status_code}") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"AI planner unavailable: {exc}") from exc
+        raise _err(503, f"Errore del pianificatore AI ({exc.response.status_code}).") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise _err(503, f"Pianificatore AI non disponibile: {exc}") from exc
 
 
 def _parse_intent(prompt: str) -> dict[str, Any]:
+    """Call Gemma and coerce its reply into the intent schema (one retry)."""
     raw = _call_lm_studio(_SYSTEM_PROMPT, prompt)
-    try:
-        return json.loads(_strip_markdown(raw))
-    except json.JSONDecodeError:
-        # Retry: prime the model with the opening brace to force JSON
-        retry_input = (
-            f"{prompt}\n\n"
-            "Reply ONLY with a JSON object. Example:\n"
-            '{"destination": "MART Rovereto", "modality_hint": "train", "time_hint": "18:00"}'
-        )
-        raw2 = _call_lm_studio(_SYSTEM_PROMPT, retry_input)
+    for candidate in (raw, _maybe_retry(prompt, raw)):
+        if candidate is None:
+            continue
         try:
-            return json.loads(_strip_markdown(raw2))
-        except json.JSONDecodeError as exc:
-            raise HTTPException(
-                status_code=422, detail="Could not parse trip intent from prompt"
-            ) from exc
+            parsed = json.loads(_first_json_object(_strip_markdown(candidate)))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(parsed, dict):
+            return _normalise_intent(parsed)
+
+    raise _err(
+        422,
+        "Non sono riuscito a interpretare la richiesta. Prova a indicare "
+        "chiaramente dove vuoi andare.",
+    )
 
 
-def _availability_score(m: dict[str, Any]) -> float:
-    t = m["type"]
-    if t == "train":
-        return m.get("available_seats", 0) / max(m.get("total_seats", 1), 1)
-    if t == "parking":
-        return m.get("available_spots", 0) / max(m.get("total_spots", 1), 1)
-    if t == "bike_sharing":
-        total = m.get("available_bikes", 0) + m.get("available_docks", 1)
-        return m.get("available_bikes", 0) / max(total, 1)
-    return 0.5  # taxi — always dispatchable
+def _maybe_retry(prompt: str, first_raw: str) -> str | None:
+    """If the first reply already parsed, skip the retry; else re-prompt harder."""
+    try:
+        json.loads(_first_json_object(_strip_markdown(first_raw)))
+        return None
+    except (json.JSONDecodeError, TypeError):
+        retry_input = (
+            f'{prompt}\n\nReply with ONLY the JSON object, starting with "{{". '
+            'Example: {"in_scope": true, "destination": "Stazione di Trento", '
+            '"mode": "bus", "restated": "..."}'
+        )
+        return _call_lm_studio(_SYSTEM_PROMPT, retry_input)
 
 
-def _select_modality(modalities: list[dict[str, Any]], hint: str) -> dict[str, Any]:
-    available = [
-        m for m in modalities
-        if m["type"] == "taxi" or _availability_score(m) > 0
-    ]
-    if not available:
-        raise HTTPException(status_code=409, detail="No resources available for this trip")
+def _normalise_intent(parsed: dict[str, Any]) -> dict[str, Any]:
+    mode = str(parsed.get("mode") or "any").strip().lower()
+    if mode not in _MODE_TO_SUGGESTION and mode != "any":
+        mode = "any"
+    dest = parsed.get("destination")
+    dest = str(dest).strip() if dest else None
+    return {
+        "in_scope":    bool(parsed.get("in_scope")),
+        "destination": dest or None,
+        "mode":        mode,
+        "restated":    str(parsed.get("restated") or "").strip(),
+    }
 
-    if hint and hint != "any":
-        hinted = [m for m in available if m["type"] == hint]
-        if hinted:
-            return hinted[0]
 
-    def sort_key(m: dict[str, Any]) -> tuple[float, int]:
-        score = _availability_score(m)
-        priority = _MODALITY_PRIORITY.index(m["type"]) if m["type"] in _MODALITY_PRIORITY else 99
-        return (-score, priority)
+# ---------------------------------------------------------------------------
+# Phase 2 — destination resolution + plan building
+# ---------------------------------------------------------------------------
 
-    return sorted(available, key=sort_key)[0]
+
+def _resolve_destination(name: str) -> dict[str, Any]:
+    """Resolve a place name to coordinates.
+
+    Curated landmarks are tried first (they cover the destinations the bus-stop
+    catalogue names poorly), then the full city mobility catalogue.
+    """
+    query = name.strip()
+
+    # 1. Curated landmarks — tolerant of case, word order and filler words.
+    #    default_process lowercases and strips punctuation on both sides.
+    alias_choices = {i: alias for i, (alias, _) in enumerate(_LANDMARK_ALIASES)}
+    lm_hit = process.extractOne(
+        query, alias_choices, scorer=fuzz.token_set_ratio,
+        processor=utils.default_process, score_cutoff=82,
+    )
+    if lm_hit is not None:
+        lm = _LANDMARK_ALIASES[lm_hit[2]][1]
+        return {
+            "lat": lm["lat"], "lng": lm["lng"],
+            "name": lm["name"], "category": lm["category"],
+        }
+
+    # 2. The city catalogue, then the address geocoder — so any street or
+    #    landmark in the Trento–Rovereto region can be reached, not just the
+    #    named mobility resources.
+    place = routing.resolve_place(query)
+    if place is not None:
+        return place
+
+    # 3. Nothing matched anywhere — offer the closest catalogue names to retry.
+    places = routing._PLACES
+    seen: list[str] = []
+    if places:
+        choices = {i: p["name"] for i, p in enumerate(places)}
+        near = process.extract(
+            query, choices, scorer=fuzz.WRatio,
+            processor=utils.default_process, limit=4,
+        )
+        for _, _, idx in near:
+            label = places[idx]["name"]
+            if label not in seen:
+                seen.append(label)
+    raise _err(
+        422,
+        f'Non ho trovato "{name}" tra le destinazioni di Trento e Rovereto.',
+        did_you_mean=seen,
+    )
+
+
+def _pick_suggestion(suggestions: list[dict[str, Any]], mode: str) -> dict[str, Any]:
+    """Choose the itinerary matching the user's mode hint, else the fastest."""
+    wanted_id = _MODE_TO_SUGGESTION.get(mode)
+    if wanted_id:
+        for s in suggestions:
+            if s["id"] == wanted_id:
+                return s
+    for s in suggestions:
+        if s.get("recommended"):
+            return s
+    return suggestions[0]
+
+
+def _format_cost(cost: float) -> str:
+    return "gratis" if cost <= 0 else f"€{cost:.2f}".replace(".", ",")
+
+
+def _summarise(
+    chosen: dict[str, Any], dest: dict[str, Any], suggestions: list[dict[str, Any]]
+) -> str:
+    mins = round(chosen["total_duration_min"])
+    summary = (
+        f"{chosen['icon']} {chosen['label']} verso {dest['name']}: "
+        f"circa {mins} min · {_format_cost(chosen['cost_eur'])}."
+    )
+    alternatives = len(suggestions) - 1
+    if alternatives > 0:
+        summary += f" {alternatives} alternative valutate."
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# Endpoint
+# ---------------------------------------------------------------------------
 
 
 @router.post("/plan")
 def ai_plan(payload: AIPlanRequest) -> dict[str, Any]:
-    intent = _parse_intent(payload.prompt)
+    prompt = (payload.prompt or "").strip()
+    if not prompt:
+        raise _err(422, "Scrivi dove vuoi andare per generare un piano.")
 
-    destination   = intent.get("destination", "stazione fs rovereto")
-    modality_hint = intent.get("modality_hint", "any") or "any"
+    origin = (
+        {"lat": payload.origin.lat, "lng": payload.origin.lng}
+        if payload.origin is not None
+        else dict(_DEFAULT_ORIGIN)
+    )
 
-    search_result = _run_search_logic(destination)
-    chosen        = _select_modality(search_result["modalities"], modality_hint)
-    booking       = _run_book_logic(chosen["option_id"])
+    # Phase 1 — extract intent via the local Gemma model.
+    intent = _parse_intent(prompt)
 
-    bp         = booking["boarding_pass"]
-    ai_summary = f"{bp['title']} · {bp['subtitle']}"
+    if not intent["in_scope"] or not intent["destination"]:
+        raise _err(
+            422,
+            intent["restated"]
+            or "Questa richiesta non rientra in ciò che posso pianificare.",
+        )
+
+    # Phase 2 — resolve the destination and build multimodal itineraries.
+    dest = _resolve_destination(intent["destination"])
+    origin_pt = {"lat": origin["lat"], "lng": origin["lng"], "name": "La tua posizione"}
+    suggestions = routing._build_suggestions(origin_pt, dest)
+    if not suggestions:
+        raise _err(422, f"Non ci sono itinerari disponibili verso {dest['name']}.")
+
+    chosen = _pick_suggestion(suggestions, intent["mode"])
 
     return {
-        **booking,
-        "ai_summary":    ai_summary,
-        "parsed_intent": intent,
+        "intent":          intent,
+        "origin":          origin_pt,
+        "destination":     dest,
+        "straight_line_m": round(
+            haversine_m(origin["lat"], origin["lng"], dest["lat"], dest["lng"])
+        ),
+        "suggestions":     suggestions,
+        "chosen_id":       chosen["id"],
+        "ai_summary":      _summarise(chosen, dest, suggestions),
+        "capabilities":    _CAPABILITIES,
     }
+
+
+@router.get("/capabilities")
+def ai_capabilities() -> dict[str, Any]:
+    """What the planner can do — used by the UI for its idle/help state."""
+    return _CAPABILITIES
