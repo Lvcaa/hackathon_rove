@@ -10,6 +10,25 @@ import MapView from '../components/MapView';
 import BottomSheet from '../components/BottomSheet';
 import LayerTogglePanel from '../components/LayerTogglePanel';
 import BookingSheet from '../components/BookingSheet';
+import UserAvatarButton from '../components/UserAvatarButton';
+
+// Origin/destination point a routing request resolves to.
+interface RouteTarget { name: string; lat: number; lng: number; }
+
+// Resolve a map feature to a single coordinate — its point, or a polygon's
+// rough centroid (average of the exterior ring).
+function featureCoords(f: MobilityFeature): { lat: number; lng: number } {
+  if (f.geometry.type === 'Point') {
+    const c = f.geometry.coordinates as number[];
+    return { lng: c[0], lat: c[1] };
+  }
+  const ring = (f.geometry.coordinates as number[][][])[0] ?? [];
+  const n = ring.length || 1;
+  return {
+    lng: ring.reduce((s, c) => s + c[0], 0) / n,
+    lat: ring.reduce((s, c) => s + c[1], 0) / n,
+  };
+}
 
 const ALL: Set<CategoryKey> = new Set([
   'stations', 'taxi', 'carsharing', 'parking',
@@ -137,6 +156,7 @@ export default function MapScreen() {
           onRouteFocusChange={setRouteFocusActive}
           onAIRequestLocation={handleAIRequestLocation}
         />
+        <UserAvatarButton />
       </View>
     </View>
   );

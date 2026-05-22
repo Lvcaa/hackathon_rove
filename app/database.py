@@ -31,6 +31,13 @@ def get_db():
 
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    full_name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS parking_zones (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -81,6 +88,14 @@ def init_db() -> None:
     os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     with get_db() as conn:
         conn.executescript(_SCHEMA)
+        # Idempotent migration: add user_id column to trips if it doesn't exist yet.
+        cur = conn.execute("PRAGMA table_info(trips)")
+        cols = {r[1] for r in cur.fetchall()}
+        if "user_id" not in cols:
+            conn.execute("ALTER TABLE trips ADD COLUMN user_id INTEGER")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_trips_user_id ON trips(user_id)"
+            )
         _seed_data(conn)
 
 

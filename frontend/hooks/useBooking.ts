@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { BookingState, ModalityType, TripSearchResponse, TripBookResponse } from '../types/booking';
+import { apiFetch } from '../lib/api';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
 
@@ -37,18 +38,10 @@ export function useBooking() {
   }, []);
 
   const postBooking = useCallback(async (option_id: string) => {
-    const res = await fetch(`${API_BASE}/api/trips/book`, {
+    return apiFetch<TripBookResponse>('/api/trips/book', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ option_id }),
     });
-
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.detail ?? `Prenotazione fallita (${res.status})`);
-    }
-
-    return (await res.json()) as TripBookResponse;
   }, []);
 
   const applyConfirmation = useCallback((data: TripBookResponse) => {
@@ -115,13 +108,17 @@ export function useBooking() {
     try {
       const data = await postBooking(option_id);
       applyConfirmation(data);
-    } catch (err) {
+    } catch (err: any) {
+      const msg =
+        err?.status === 401
+          ? 'Please log in to book — tap the profile icon at bottom-left.'
+          : String(err);
       // Roll back to the selection list so the user can retry or pick another
       setState((prev) => ({
         ...prev,
         phase:           'selecting',
         bookingOptionId: null,
-        error:           String(err),
+        error:           msg,
         directBookingLabel: null,
       }));
     }

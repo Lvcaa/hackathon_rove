@@ -37,6 +37,11 @@ pyproj
 shapely
 rapidfuzz
 
+# Auth
+bcrypt
+python-jose[cryptography]
+pydantic[email]
+
 # Development
 pytest
 ruff
